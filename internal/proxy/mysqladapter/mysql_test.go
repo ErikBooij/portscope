@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -475,10 +476,14 @@ func TestListenerTLSUpgradeAuthenticatesApplication(t *testing.T) {
 	go func() {
 		_ = New().Run(ctx, configured, testSink{events: events}, func(address string) { ready <- address })
 	}()
-	plain, err := net.Dial("tcp", <-ready)
+	raw, err := net.Dial("tcp", <-ready)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Real clients can put the SSLRequest and the first TLS record in one TCP
+	// read. Force that shape so the proxy must preserve bytes prefetched while
+	// parsing the plaintext packet before it wraps the connection in TLS.
+	plain := &coalescingWriteConn{Conn: raw, remaining: 3}
 	defer plain.Close()
 	reader := bufio.NewReader(plain)
 	greetingPacket, err := readPacket(reader)
@@ -531,6 +536,36 @@ func TestListenerTLSUpgradeAuthenticatesApplication(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("missing listener TLS connection observation")
 	}
+}
+
+type coalescingWriteConn struct {
+	net.Conn
+	mu        sync.Mutex
+	remaining int
+	buffer    []byte
+}
+
+func (connection *coalescingWriteConn) Write(data []byte) (int, error) {
+	connection.mu.Lock()
+	defer connection.mu.Unlock()
+	if connection.remaining == 0 {
+		return connection.Conn.Write(data)
+	}
+	connection.buffer = append(connection.buffer, data...)
+	connection.remaining--
+	if connection.remaining > 0 {
+		return len(data), nil
+	}
+	buffer := connection.buffer
+	connection.buffer = nil
+	for len(buffer) > 0 {
+		written, err := connection.Conn.Write(buffer)
+		if err != nil {
+			return 0, err
+		}
+		buffer = buffer[written:]
+	}
+	return len(data), nil
 }
 
 func mysqlTestTLSCertificate(t *testing.T) (*tls.Config, string, string, string) {

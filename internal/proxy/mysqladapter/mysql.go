@@ -101,7 +101,10 @@ func (adapter *Adapter) handle(ctx context.Context, upstream config.Upstream, cl
 			sendMySQLError(client, sequence, 3159, "HY000", "TLS is not enabled on this Portscope listener")
 			return
 		}
-		secure := tls.Server(client, listenerTLS.Clone())
+		// The SSLRequest and TLS ClientHello may arrive in the same TCP read.
+		// Preserve anything the plaintext packet reader already prefetched when
+		// handing the connection to the TLS stack.
+		secure := tls.Server(&bufferedConn{Conn: client, reader: reader}, listenerTLS.Clone())
 		if err := secure.HandshakeContext(ctx); err != nil {
 			return
 		}
@@ -200,6 +203,15 @@ func (adapter *Adapter) handle(ctx context.Context, upstream config.Upstream, cl
 		}
 		recordCommand(upstream, sink, connectionID, commandStarted, command, response, server, downstreamTLS)
 	}
+}
+
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (connection *bufferedConn) Read(data []byte) (int, error) {
+	return connection.reader.Read(data)
 }
 
 // readClientCommand inspects the command byte before forwarding, allowing
