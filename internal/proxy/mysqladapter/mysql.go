@@ -164,7 +164,7 @@ func (adapter *Adapter) handle(ctx context.Context, upstream config.Upstream, cl
 	_ = client.SetDeadline(time.Time{})
 	recordConnect(upstream, sink, connectionID, started, handshake, server, downstreamTLS)
 
-	statements := make(map[uint32]string)
+	statements := make(map[uint32]*preparedStatement)
 	for {
 		commandStarted := time.Now()
 		request, err := readClientCommand(reader, server.connection)
@@ -196,7 +196,7 @@ func (adapter *Adapter) handle(ctx context.Context, upstream config.Upstream, cl
 			return
 		}
 		if command.code == comStmtPrepare && response.outcome == "ok" {
-			statements[response.statementID] = command.query
+			statements[response.statementID] = &preparedStatement{query: command.query, parameters: response.parameters, columns: response.definitions}
 		}
 		recordCommand(upstream, sink, connectionID, commandStarted, command, response, server, downstreamTLS)
 	}

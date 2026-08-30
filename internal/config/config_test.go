@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,15 +42,15 @@ func TestValidateRejectsUnsafeHeaderPoliciesAndMismatchedTLS(t *testing.T) {
 }
 
 func TestSecretsAreWriteOnlyAndPreservedOnEdit(t *testing.T) {
-	original := Upstream{ID: "cache", Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "localhost:6379", Redis: &RedisOptions{Username: "app", Password: "redis-secret"}}
+	original := Upstream{ID: "cache", Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "localhost:6379", Redis: &RedisOptions{ListenerUsername: "proxy", ListenerPassword: "listener-secret", UpstreamUsername: "app", UpstreamPassword: "redis-secret"}}
 	public := PublicUpstream(original)
-	if public.Redis.Password != "" || !public.Redis.PasswordSet {
+	if public.Redis.ListenerPassword != "" || !public.Redis.ListenerPasswordSet || public.Redis.UpstreamPassword != "" || !public.Redis.UpstreamPasswordSet {
 		t.Fatalf("public Redis credentials leaked or lost state: %#v", public.Redis)
 	}
 	incoming := public
 	merged := MergeSecrets(incoming, original)
-	if merged.Redis.Password != "redis-secret" {
-		t.Fatal("blank write-only password did not preserve the existing secret")
+	if merged.Redis.ListenerPassword != "listener-secret" || merged.Redis.UpstreamPassword != "redis-secret" {
+		t.Fatal("blank write-only Redis passwords did not preserve existing secrets")
 	}
 
 	httpOriginal := Upstream{ID: "api", Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "http://localhost:3000", HTTP: &HTTPOptions{RequestHeaders: []HeaderRule{{Action: "set", Name: "Authorization", Value: "Bearer secret", Sensitive: true}}}}
@@ -69,6 +70,19 @@ func TestSecretsAreWriteOnlyAndPreservedOnEdit(t *testing.T) {
 	mysqlMerged := MergeSecrets(mysqlPublic, mysqlOriginal)
 	if mysqlMerged.MySQL.ListenerPassword != "listener-secret" || mysqlMerged.MySQL.UpstreamPassword != "database-secret" {
 		t.Fatal("blank write-only MySQL passwords did not preserve existing secrets")
+	}
+}
+
+func TestLegacyRedisCredentialsMigrateToBothTerminatedLegs(t *testing.T) {
+	var options RedisOptions
+	if err := json.Unmarshal([]byte(`{"username":"service","password":"secret","passwordSet":true,"database":3,"tls":{"enabled":true,"serverName":"redis.internal"}}`), &options); err != nil {
+		t.Fatal(err)
+	}
+	if options.ListenerUsername != "service" || options.ListenerPassword != "secret" || options.UpstreamUsername != "service" || options.UpstreamPassword != "secret" {
+		t.Fatalf("legacy credentials were not safely migrated: %#v", options)
+	}
+	if !options.ListenerPasswordSet || !options.UpstreamPasswordSet || !options.UpstreamTLS.Enabled || options.UpstreamTLS.ServerName != "redis.internal" || options.Database != 3 {
+		t.Fatalf("legacy Redis settings were not preserved: %#v", options)
 	}
 }
 

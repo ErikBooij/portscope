@@ -20,12 +20,12 @@ import (
 
 func TestManagementAPINeverReturnsStoredSecretsAndPreservesThemOnEdit(t *testing.T) {
 	handler, configuration := testHandler(t)
-	payload := `{"name":"cache","protocol":"redis","listenAddr":"127.0.0.1:6380","target":"127.0.0.1:6379","enabled":false,"redis":{"username":"app","password":"api-secret","passwordSet":true,"database":0,"tls":{"enabled":false}}}`
+	payload := `{"name":"cache","protocol":"redis","listenAddr":"127.0.0.1:6380","target":"127.0.0.1:6379","enabled":false,"redis":{"listenerUsername":"proxy","listenerPassword":"listener-secret","listenerPasswordSet":true,"upstreamUsername":"app","upstreamPassword":"api-secret","upstreamPasswordSet":true,"database":0,"upstreamTls":{"enabled":false}}}`
 	create := httptest.NewRequest(http.MethodPost, "/api/upstreams", strings.NewReader(payload))
 	create.Header.Set("Content-Type", "application/json")
 	created := httptest.NewRecorder()
 	handler.ServeHTTP(created, create)
-	if created.Code != http.StatusOK || strings.Contains(created.Body.String(), "api-secret") || !strings.Contains(created.Body.String(), `"passwordSet":true`) {
+	if created.Code != http.StatusOK || strings.Contains(created.Body.String(), "api-secret") || strings.Contains(created.Body.String(), "listener-secret") || !strings.Contains(created.Body.String(), `"listenerPasswordSet":true`) || !strings.Contains(created.Body.String(), `"upstreamPasswordSet":true`) {
 		t.Fatalf("unsafe create response (%d): %s", created.Code, created.Body.String())
 	}
 	var public config.Upstream
@@ -42,12 +42,12 @@ func TestManagementAPINeverReturnsStoredSecretsAndPreservesThemOnEdit(t *testing
 		t.Fatalf("unsafe update response (%d): %s", updated.Code, updated.Body.String())
 	}
 	stored, ok := configuration.Get(public.ID)
-	if !ok || stored.Redis == nil || stored.Redis.Password != "api-secret" {
+	if !ok || stored.Redis == nil || stored.Redis.ListenerPassword != "listener-secret" || stored.Redis.UpstreamPassword != "api-secret" {
 		t.Fatalf("stored secret was not preserved: %#v", stored)
 	}
 	list := httptest.NewRecorder()
 	handler.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/upstreams", nil))
-	if strings.Contains(list.Body.String(), "api-secret") {
+	if strings.Contains(list.Body.String(), "api-secret") || strings.Contains(list.Body.String(), "listener-secret") {
 		t.Fatalf("list leaked a secret: %s", list.Body.String())
 	}
 }

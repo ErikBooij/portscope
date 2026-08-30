@@ -3,7 +3,9 @@ package mysqladapter
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"math"
 	"net"
 	"strings"
 	"testing"
@@ -71,7 +73,7 @@ func TestAdapterTerminatesAuthenticationAndCapturesTextResult(t *testing.T) {
 		}
 		packets := []packet{
 			{sequence: 1, payload: []byte{1}},
-			{sequence: 2, payload: columnDefinition("appdb", "answer")},
+			{sequence: 2, payload: columnDefinitionPayload("appdb", "answer")},
 			{sequence: 3, payload: eofPayload()},
 			{sequence: 4, payload: appendLenencString(nil, "42")},
 			{sequence: 5, payload: eofPayload()},
@@ -223,6 +225,103 @@ func TestNativeAndCachingSHA2AuthenticationResponses(t *testing.T) {
 	}
 }
 
+func TestPreparedStatementParametersAreDecodedAndTypesAreReused(t *testing.T) {
+	statement := &preparedStatement{query: "SELECT ?, ?, ?, ?, ?", parameters: 5}
+	statements := map[uint32]*preparedStatement{7: statement}
+	payload := []byte{comStmtExecute, 7, 0, 0, 0, 0, 1, 0, 0, 0, 0x10, 1}
+	payload = append(payload,
+		mysqlTypeLong, 0,
+		mysqlTypeVarString, 0,
+		mysqlTypeDouble, 0,
+		mysqlTypeDateTime, 0,
+		mysqlTypeNull, 0,
+	)
+	var integer [4]byte
+	signedInteger := int32(-7)
+	binary.LittleEndian.PutUint32(integer[:], uint32(signedInteger))
+	payload = append(payload, integer[:]...)
+	payload = appendLenencString(payload, "hello")
+	var floating [8]byte
+	binary.LittleEndian.PutUint64(floating[:], math.Float64bits(10.5))
+	payload = append(payload, floating[:]...)
+	payload = append(payload, 7, 0xea, 0x07, 8, 30, 14, 15, 16)
+
+	command := parseCommand(logicalPacket{payload: payload, size: int64(len(payload))}, statements)
+	if command.request.Kind != "json" || command.operation != "EXECUTE SELECT" {
+		t.Fatalf("execute was not decoded: %#v", command)
+	}
+	var capture struct {
+		StatementID uint32 `json:"statementId"`
+		Query       string `json:"query"`
+		Parameters  []any  `json:"parameters"`
+	}
+	if err := json.Unmarshal(command.request.JSON, &capture); err != nil {
+		t.Fatal(err)
+	}
+	if capture.StatementID != 7 || capture.Query != statement.query || len(capture.Parameters) != 5 || capture.Parameters[0] != float64(-7) || capture.Parameters[1] != "hello" || capture.Parameters[2] != 10.5 || capture.Parameters[3] != "2026-08-30 14:15:16" || capture.Parameters[4] != nil {
+		t.Fatalf("decoded parameters = %#v", capture)
+	}
+
+	reused := append([]byte{comStmtExecute, 7, 0, 0, 0, 0, 1, 0, 0, 0, 0x10, 0}, integer[:]...)
+	reused = appendLenencString(reused, "again")
+	reused = append(reused, floating[:]...)
+	reused = append(reused, 7, 0xea, 0x07, 8, 30, 14, 15, 16)
+	command = parseCommand(logicalPacket{payload: reused, size: int64(len(reused))}, statements)
+	if command.request.Kind != "json" || strings.Contains(command.request.Text, "unavailable") {
+		t.Fatalf("cached parameter types were not reused: %#v", command.request)
+	}
+}
+
+func TestPreparedLongDataIsCountedWithoutCapturingContent(t *testing.T) {
+	statement := &preparedStatement{query: "INSERT INTO files VALUES (?)", parameters: 1, parameterTypes: []binaryType{{code: mysqlTypeBlob}}}
+	statements := map[uint32]*preparedStatement{9: statement}
+	secret := "binary-secret-that-must-not-be-captured"
+	longData := []byte{comStmtLongData, 9, 0, 0, 0, 0, 0}
+	longData = append(longData, secret...)
+	command := parseCommand(logicalPacket{payload: longData, size: int64(len(longData))}, statements)
+	if strings.Contains(command.request.Text, secret) || !strings.Contains(command.request.Summary, "39 bytes") {
+		t.Fatalf("long data capture was unsafe: %#v", command.request)
+	}
+	execute := []byte{comStmtExecute, 9, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0}
+	command = parseCommand(logicalPacket{payload: execute, size: int64(len(execute))}, statements)
+	if !strings.Contains(string(command.request.JSON), `"longDataBytes":39`) || strings.Contains(string(command.request.JSON), secret) {
+		t.Fatalf("long data execute capture = %s", command.request.JSON)
+	}
+}
+
+func TestBinaryResultRowIsDecodedFromColumnMetadata(t *testing.T) {
+	columns := []columnDefinition{
+		{name: "id", typeInfo: binaryType{code: mysqlTypeLongLong, unsigned: true}},
+		{name: "name", typeInfo: binaryType{code: mysqlTypeVarString}},
+		{name: "score", typeInfo: binaryType{code: mysqlTypeDouble}},
+		{name: "created", typeInfo: binaryType{code: mysqlTypeDateTime}},
+	}
+	row := []byte{0x00, 0x10}
+	var id [8]byte
+	binary.LittleEndian.PutUint64(id[:], 42)
+	row = append(row, id[:]...)
+	row = appendLenencString(row, "Ada")
+	row = append(row, 7, 0xea, 0x07, 8, 30, 9, 5, 4)
+	values, err := decodeBinaryRow(row, columns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 4 || values[0] != uint64(42) || values[1] != "Ada" || values[2] != nil || values[3] != "2026-08-30 09:05:04" {
+		t.Fatalf("decoded row = %#v", values)
+	}
+}
+
+func TestLargeBinaryValuesUseBoundedPreviews(t *testing.T) {
+	value := capturedBinaryValue([]byte(strings.Repeat("x", binaryValuePreviewLimit+100)))
+	metadata, ok := value.(map[string]any)
+	if !ok || metadata["size"] != binaryValuePreviewLimit+100 || metadata["truncated"] != true || len(metadata["preview"].(string)) != binaryValuePreviewLimit {
+		t.Fatalf("large value was not bounded: %#v", value)
+	}
+	if !hasTruncatedBinaryValue([]any{value}) {
+		t.Fatal("truncated binary value was not propagated to the observation")
+	}
+}
+
 func TestWrongListenerCredentialsNeverReachUpstreamAuthentication(t *testing.T) {
 	upstreamListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -276,7 +375,7 @@ func appendLenencString(target []byte, value string) []byte {
 	return append(target, value...)
 }
 
-func columnDefinition(schema, name string) []byte {
+func columnDefinitionPayload(schema, name string) []byte {
 	payload := make([]byte, 0, 64)
 	for _, value := range []string{"def", schema, "", "", name, name} {
 		payload = appendLenencString(payload, value)

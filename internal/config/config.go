@@ -60,11 +60,49 @@ type HTTPOptions struct {
 }
 
 type RedisOptions struct {
-	Username    string           `json:"username,omitempty"`
-	Password    string           `json:"password,omitempty"`
-	PasswordSet bool             `json:"passwordSet,omitempty"`
-	Database    int              `json:"database,omitempty"`
-	TLS         ClientTLSOptions `json:"tls,omitempty"`
+	ListenerUsername    string           `json:"listenerUsername,omitempty"`
+	ListenerPassword    string           `json:"listenerPassword,omitempty"`
+	ListenerPasswordSet bool             `json:"listenerPasswordSet,omitempty"`
+	UpstreamUsername    string           `json:"upstreamUsername,omitempty"`
+	UpstreamPassword    string           `json:"upstreamPassword,omitempty"`
+	UpstreamPasswordSet bool             `json:"upstreamPasswordSet,omitempty"`
+	Database            int              `json:"database,omitempty"`
+	UpstreamTLS         ClientTLSOptions `json:"upstreamTls,omitempty"`
+}
+
+// UnmarshalJSON migrates the original single-leg Redis settings. Existing
+// configurations retain their behavior, but both authentication legs become
+// explicit the next time the store is persisted.
+func (options *RedisOptions) UnmarshalJSON(data []byte) error {
+	type current RedisOptions
+	var decoded current
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var legacy struct {
+		Username    string           `json:"username"`
+		Password    string           `json:"password"`
+		PasswordSet bool             `json:"passwordSet"`
+		TLS         ClientTLSOptions `json:"tls"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	*options = RedisOptions(decoded)
+	if options.ListenerUsername == "" && options.UpstreamUsername == "" && legacy.Username != "" {
+		options.ListenerUsername = legacy.Username
+		options.UpstreamUsername = legacy.Username
+	}
+	if options.ListenerPassword == "" && options.UpstreamPassword == "" && (legacy.Password != "" || legacy.PasswordSet) {
+		options.ListenerPassword = legacy.Password
+		options.ListenerPasswordSet = legacy.PasswordSet
+		options.UpstreamPassword = legacy.Password
+		options.UpstreamPasswordSet = legacy.PasswordSet
+	}
+	if !options.UpstreamTLS.Enabled && legacy.TLS.Enabled {
+		options.UpstreamTLS = legacy.TLS
+	}
+	return nil
 }
 
 // MySQLOptions deliberately separates the credentials accepted by Portscope
@@ -235,19 +273,19 @@ func validateRedis(item Upstream) error {
 	if item.HTTP != nil || item.MySQL != nil {
 		return errors.New("HTTP and MySQL settings are not valid for Redis upstreams")
 	}
-	if item.ListenerTLS != nil && item.ListenerTLS.Enabled {
-		return errors.New("TLS listeners are currently supported for HTTP upstreams only")
-	}
 	if item.Redis == nil {
 		return nil
 	}
 	if item.Redis.Database < 0 {
 		return errors.New("Redis database must be zero or greater")
 	}
-	if item.Redis.Username != "" && item.Redis.Password == "" && !item.Redis.PasswordSet {
-		return errors.New("Redis username requires a password")
+	if item.Redis.ListenerUsername != "" && item.Redis.ListenerPassword == "" && !item.Redis.ListenerPasswordSet {
+		return errors.New("Redis listener username requires a listener password")
 	}
-	return validateClientTLS(item.Redis.TLS, "Redis TLS")
+	if item.Redis.UpstreamUsername != "" && item.Redis.UpstreamPassword == "" && !item.Redis.UpstreamPasswordSet {
+		return errors.New("Redis upstream username requires an upstream password")
+	}
+	return validateClientTLS(item.Redis.UpstreamTLS, "Redis upstream TLS")
 }
 
 func validateMySQL(item Upstream) error {
@@ -340,8 +378,10 @@ func PublicUpstreams(items []Upstream) []Upstream {
 	result := cloneUpstreams(items)
 	for i := range result {
 		if result[i].Redis != nil {
-			result[i].Redis.PasswordSet = result[i].Redis.Password != ""
-			result[i].Redis.Password = ""
+			result[i].Redis.ListenerPasswordSet = result[i].Redis.ListenerPassword != ""
+			result[i].Redis.ListenerPassword = ""
+			result[i].Redis.UpstreamPasswordSet = result[i].Redis.UpstreamPassword != ""
+			result[i].Redis.UpstreamPassword = ""
 		}
 		if result[i].MySQL != nil {
 			result[i].MySQL.ListenerPasswordSet = result[i].MySQL.ListenerPassword != ""
@@ -361,8 +401,13 @@ func PublicUpstream(item Upstream) Upstream { return PublicUpstreams([]Upstream{
 
 // MergeSecrets interprets an empty write-only value with ValueSet/PasswordSet as "keep existing".
 func MergeSecrets(incoming, existing Upstream) Upstream {
-	if incoming.Redis != nil && existing.Redis != nil && incoming.Redis.Password == "" && incoming.Redis.PasswordSet {
-		incoming.Redis.Password = existing.Redis.Password
+	if incoming.Redis != nil && existing.Redis != nil {
+		if incoming.Redis.ListenerPassword == "" && incoming.Redis.ListenerPasswordSet {
+			incoming.Redis.ListenerPassword = existing.Redis.ListenerPassword
+		}
+		if incoming.Redis.UpstreamPassword == "" && incoming.Redis.UpstreamPasswordSet {
+			incoming.Redis.UpstreamPassword = existing.Redis.UpstreamPassword
+		}
 	}
 	if incoming.MySQL != nil && existing.MySQL != nil {
 		if incoming.MySQL.ListenerPassword == "" && incoming.MySQL.ListenerPasswordSet {

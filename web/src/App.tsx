@@ -179,13 +179,13 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
     if (protocol === "http") {
       setDraft({ ...draft, protocol, target: "http://127.0.0.1:3000", redis: undefined, mysql: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "redis") {
-      setDraft({ ...draft, protocol, target: "127.0.0.1:6379", http: undefined, mysql: undefined, listenerTls: undefined, redis: { database: 0, tls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, target: "127.0.0.1:6379", http: undefined, mysql: undefined, listenerTls: undefined, redis: { database: 0, upstreamTls: { ...emptyTLS } } });
     } else {
       setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:3307", target: "127.0.0.1:3306", http: undefined, redis: undefined, mysql: { listenerUsername: "portscope", upstreamUsername: "root", upstreamTls: { ...emptyTLS } } });
     }
   }
   const httpOptions = draft.http ?? { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } };
-  const redisOptions = draft.redis ?? { database: 0, tls: { ...emptyTLS } };
+  const redisOptions = draft.redis ?? { database: 0, upstreamTls: { ...emptyTLS } };
   const mysqlOptions = draft.mysql ?? { listenerUsername: "portscope", upstreamUsername: "root", upstreamTls: { ...emptyTLS } };
 
   return <div className="modal-backdrop" onMouseDown={onClose}>
@@ -204,7 +204,7 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
         </div>
 
         {draft.protocol === "http" && <HTTPSettings value={draft} options={httpOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
-        {draft.protocol === "redis" && <RedisSettings value={redisOptions} onChange={redis => setDraft({ ...draft, redis })}/>}
+        {draft.protocol === "redis" && <RedisSettings value={draft} options={redisOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "mysql" && <MySQLSettings value={draft} options={mysqlOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
 
         <label className="enabled"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft({ ...draft, enabled: event.target.checked })}/><span><b>Start this proxy</b><small>Disabled upstreams keep their configuration and history.</small></span></label>
@@ -232,24 +232,33 @@ function HTTPSettings({ value, options, onChange }: { value: Upstream; options: 
     </details>
     <details className="config-section">
       <summary><span>LISTENER TLS</span><small>{value.listenerTls?.enabled ? "HTTPS + HTTP/2" : "HTTP + h2c"}</small></summary>
-      <ListenerTLSFields value={value.listenerTls ?? { enabled: false }} onChange={listenerTls => onChange({ listenerTls })}/>
+      <ListenerTLSFields value={value.listenerTls ?? { enabled: false }} onChange={listenerTls => onChange({ listenerTls })} mode="redis"/>
     </details>
   </div>;
 }
 
-function RedisSettings({ value, onChange }: { value: NonNullable<Upstream["redis"]>; onChange: (value: NonNullable<Upstream["redis"]>) => void }) {
+function RedisSettings({ value, options, onChange }: { value: Upstream; options: NonNullable<Upstream["redis"]>; onChange: (value: Partial<Upstream>) => void }) {
+  const update = (redis: NonNullable<Upstream["redis"]>) => onChange({ redis });
   return <div className="advanced-stack">
     <details className="config-section" open>
-      <summary><span>AUTHENTICATION + DATABASE</span><small>{value.passwordSet || value.password ? "credentials stored" : "no authentication"}</small></summary>
+      <summary><span>APPLICATION → PORTSCOPE</span><small>{options.listenerPasswordSet || options.listenerPassword ? "credentials stored" : "no authentication"}</small></summary>
       <div className="field-pair">
-        <label>ACL USERNAME<input value={value.username ?? ""} onChange={event => onChange({ ...value, username: event.target.value })} placeholder="default"/><small>Leave blank for password-only AUTH</small></label>
-        <label>PASSWORD<input type="password" autoComplete="new-password" value={value.password ?? ""} onChange={event => onChange({ ...value, password: event.target.value, passwordSet: event.target.value !== "" })} placeholder={value.passwordSet ? "Stored — enter to replace" : "Optional"}/><small>{value.passwordSet && <button className="inline-danger" type="button" onClick={() => onChange({ ...value, password: "", passwordSet: false })}>Clear stored password</button>}</small></label>
+        <label>LISTENER USERNAME<input value={options.listenerUsername ?? ""} onChange={event => update({ ...options, listenerUsername: event.target.value })} placeholder="default"/><small>Blank means the Redis default user.</small></label>
+        <SecretInput label="LISTENER PASSWORD" value={options.listenerPassword ?? ""} valueSet={options.listenerPasswordSet ?? false} onChange={(listenerPassword, listenerPasswordSet) => update({ ...options, listenerPassword, listenerPasswordSet })}/>
       </div>
-      <label>DATABASE<input type="number" min="0" value={value.database ?? 0} onChange={event => onChange({ ...value, database: Number(event.target.value) })}/><small>Portscope issues SELECT before forwarding application traffic.</small></label>
+    </details>
+    <details className="config-section" open>
+      <summary><span>PORTSCOPE → REDIS</span><small>{options.upstreamTls?.enabled ? "TLS" : "plaintext"}</small></summary>
+      <div className="field-pair">
+        <label>UPSTREAM USERNAME<input value={options.upstreamUsername ?? ""} onChange={event => update({ ...options, upstreamUsername: event.target.value })} placeholder="default"/><small>Blank sends password-only AUTH.</small></label>
+        <SecretInput label="UPSTREAM PASSWORD" value={options.upstreamPassword ?? ""} valueSet={options.upstreamPasswordSet ?? false} onChange={(upstreamPassword, upstreamPasswordSet) => update({ ...options, upstreamPassword, upstreamPasswordSet })}/>
+      </div>
+      <label>DATABASE<input type="number" min="0" value={options.database ?? 0} onChange={event => update({ ...options, database: Number(event.target.value) })}/><small>Portscope owns SELECT state; application SELECT is handled locally.</small></label>
+      <TLSClientFields value={options.upstreamTls ?? emptyTLS} onChange={upstreamTls => update({ ...options, upstreamTls })}/>
     </details>
     <details className="config-section">
-      <summary><span>UPSTREAM TLS</span><small>{value.tls?.enabled ? "encrypted" : "plaintext"}</small></summary>
-      <TLSClientFields value={value.tls ?? emptyTLS} onChange={tls => onChange({ ...value, tls })}/>
+      <summary><span>LISTENER TLS</span><small>{value.listenerTls?.enabled ? "required" : "plaintext"}</small></summary>
+      <ListenerTLSFields value={value.listenerTls ?? { enabled: false }} onChange={listenerTls => onChange({ listenerTls })}/>
     </details>
   </div>;
 }
@@ -312,9 +321,10 @@ function TLSClientFields({ value, onChange }: { value: ClientTLSOptions; onChang
   </div>;
 }
 
-function ListenerTLSFields({ value, onChange, mode = "http" }: { value: NonNullable<Upstream["listenerTls"]>; onChange: (value: NonNullable<Upstream["listenerTls"]>) => void; mode?: "http" | "mysql" }) {
+function ListenerTLSFields({ value, onChange, mode = "http" }: { value: NonNullable<Upstream["listenerTls"]>; onChange: (value: NonNullable<Upstream["listenerTls"]>) => void; mode?: "http" | "redis" | "mysql" }) {
+  const listenerName = mode === "mysql" ? "MySQL" : mode === "redis" ? "Redis" : "HTTPS";
   return <div className="tls-fields">
-    <label className="enabled compact"><input type="checkbox" checked={value.enabled} onChange={event => onChange(event.target.checked ? { ...value, enabled: true } : { enabled: false })}/><span><b>{mode === "mysql" ? "Require MySQL TLS" : "Serve HTTPS"}</b><small>{mode === "mysql" ? "TLS is negotiated inside the MySQL connection phase." : "HTTP/1.1 and HTTP/2 are negotiated with ALPN."}</small></span></label>
+    <label className="enabled compact"><input type="checkbox" checked={value.enabled} onChange={event => onChange(event.target.checked ? { ...value, enabled: true } : { enabled: false })}/><span><b>{mode === "http" ? "Serve HTTPS" : `Require ${listenerName} TLS`}</b><small>{mode === "mysql" ? "TLS is negotiated inside the MySQL connection phase." : mode === "redis" ? "The application connects with rediss:// from the first byte." : "HTTP/1.1 and HTTP/2 are negotiated with ALPN."}</small></span></label>
     {value.enabled && <>
       <div className="field-pair"><label>CERTIFICATE PEM<input value={value.certFile ?? ""} onChange={event => onChange({ ...value, certFile: event.target.value })} placeholder="/path/to/server.pem"/></label><label>PRIVATE KEY<input value={value.keyFile ?? ""} onChange={event => onChange({ ...value, keyFile: event.target.value })} placeholder="/path/to/server-key.pem"/></label></div>
       <label>CLIENT CA PEM<input value={value.clientCaFile ?? ""} onChange={event => onChange({ ...value, clientCaFile: event.target.value })} placeholder="/path/to/client-ca.pem"/><small>Optional; verifies a client certificate when one is presented.</small></label>

@@ -38,8 +38,17 @@ type commandInfo struct {
 	operation   string
 	query       string
 	statementID uint32
+	statement   *preparedStatement
 	request     observation.Payload
 	noResponse  bool
+}
+
+type preparedStatement struct {
+	query          string
+	parameters     int
+	parameterTypes []binaryType
+	columns        []columnDefinition
+	longData       map[uint16]int64
 }
 
 type responseInfo struct {
@@ -51,6 +60,7 @@ type responseInfo struct {
 	parameters  int
 	columns     int
 	rows        int
+	definitions []columnDefinition
 }
 
 type responseStream struct {
@@ -62,7 +72,7 @@ type responseStream struct {
 	truncated    bool
 }
 
-func parseCommand(item logicalPacket, statements map[uint32]string) commandInfo {
+func parseCommand(item logicalPacket, statements map[uint32]*preparedStatement) commandInfo {
 	request := observation.Payload{Kind: "mysql", Size: item.size, Truncated: item.truncated}
 	if len(item.payload) == 0 {
 		request.Summary = "empty command"
@@ -85,12 +95,36 @@ func parseCommand(item logicalPacket, statements map[uint32]string) commandInfo 
 	case comStmtExecute, comStmtClose, comStmtReset, comStmtFetch, comStmtLongData:
 		if len(item.payload) >= 5 {
 			result.statementID = binary.LittleEndian.Uint32(item.payload[1:5])
-			if query := statements[result.statementID]; query != "" {
-				result.operation += " " + sqlVerb(query)
-				result.request.Summary = query
+			result.statement = statements[result.statementID]
+			if result.statement != nil {
+				result.query = result.statement.query
+				result.operation += " " + sqlVerb(result.statement.query)
+				result.request.Summary = result.statement.query
 			}
 		}
-		result.request.Text = hexPreview(item.payload, 512)
+		if code == comStmtExecute && result.statement != nil {
+			if parameters, decodeErr := decodeExecuteParameters(item.payload, result.statement); decodeErr == nil {
+				encoded, _ := json.Marshal(map[string]any{"statementId": result.statementID, "query": result.statement.query, "parameters": parameters})
+				result.request.Kind = "json"
+				result.request.JSON = encoded
+				result.request.Truncated = result.request.Truncated || hasTruncatedBinaryValue(parameters)
+			} else {
+				result.request.Text = "parameter decoding unavailable: " + decodeErr.Error()
+			}
+			result.statement.longData = nil
+		} else if code == comStmtLongData && result.statement != nil && len(item.payload) >= 7 {
+			parameter := binary.LittleEndian.Uint16(item.payload[5:7])
+			if result.statement.longData == nil {
+				result.statement.longData = make(map[uint16]int64)
+			}
+			result.statement.longData[parameter] += int64(len(item.payload) - 7)
+			result.request.Summary = fmt.Sprintf("statement %d · parameter %d · %d bytes", result.statementID, parameter, len(item.payload)-7)
+		} else {
+			result.request.Text = hexPreview(item.payload, 512)
+		}
+		if code == comStmtReset && result.statement != nil {
+			result.statement.longData = nil
+		}
 		result.noResponse = code == comStmtClose || code == comStmtLongData
 	case comQuit:
 		result.noResponse = true
@@ -170,8 +204,15 @@ func readCommandResponse(reader *bufio.Reader, client net.Conn, sequence byte, c
 	if command.code == comStmtPrepare {
 		return readPrepareResponse(stream)
 	}
-	if command.code == comFieldList || command.code == comStmtFetch {
-		return readUntilTerminator(stream, command.code == comStmtFetch)
+	if command.code == comFieldList {
+		return readUntilTerminator(stream, nil)
+	}
+	if command.code == comStmtFetch {
+		var columns []columnDefinition
+		if command.statement != nil {
+			columns = command.statement.columns
+		}
+		return readUntilTerminator(stream, columns)
 	}
 	first, err := stream.next()
 	if err != nil {
@@ -204,22 +245,26 @@ func readGeneralResponse(stream *responseStream, first logicalPacket, command co
 	if command.code == comStatistics {
 		return responseInfo{payload: observation.Payload{Kind: "text", Summary: "server statistics", Text: string(first.payload), Size: stream.size, Truncated: stream.truncated}, outcome: "ok"}, nil
 	}
-	return readResultset(stream, first, command.code == comQuery)
+	return readResultset(stream, first, command.code != comQuery)
 }
 
-func readResultset(stream *responseStream, first logicalPacket, textRows bool) (responseInfo, error) {
+func readResultset(stream *responseStream, first logicalPacket, binaryRows bool) (responseInfo, error) {
 	offset := 0
 	columnCount, null, err := readLenenc(first.payload, &offset)
 	if err != nil || null || columnCount > 1<<20 {
 		return responseInfo{}, errors.New("invalid MySQL resultset column count")
 	}
-	columns := make([]string, 0, int(columnCount))
+	definitions := make([]columnDefinition, 0, int(columnCount))
 	for range int(columnCount) {
 		definition, readErr := stream.next()
 		if readErr != nil {
 			return responseInfo{}, readErr
 		}
-		columns = append(columns, columnName(definition.payload, len(columns)))
+		parsed, parseErr := parseColumnDefinition(definition.payload, len(definitions))
+		if parseErr != nil {
+			parsed.name = "column_" + strconv.Itoa(len(definitions)+1)
+		}
+		definitions = append(definitions, parsed)
 	}
 	if stream.capabilities&clientDeprecateEOF == 0 {
 		terminator, readErr := stream.next()
@@ -232,6 +277,7 @@ func readResultset(stream *responseStream, first logicalPacket, textRows bool) (
 	}
 	rows := make([][]any, 0)
 	rowCount := 0
+	decodedValuesTruncated := false
 	var status uint16
 	for {
 		row, readErr := stream.next()
@@ -247,22 +293,34 @@ func readResultset(stream *responseStream, first logicalPacket, textRows bool) (
 			break
 		}
 		rowCount++
-		if textRows && len(rows) < 100 {
-			if values, decodeErr := decodeTextRow(row.payload, int(columnCount)); decodeErr == nil {
+		if len(rows) < 100 {
+			var values []any
+			var decodeErr error
+			if binaryRows {
+				values, decodeErr = decodeBinaryRow(row.payload, definitions)
+			} else {
+				values, decodeErr = decodeTextRow(row.payload, int(columnCount))
+			}
+			if decodeErr == nil {
 				rows = append(rows, values)
+				decodedValuesTruncated = decodedValuesTruncated || hasTruncatedBinaryValue(values)
 			}
 		}
 	}
 	payload := observation.Payload{Kind: "mysql", Summary: fmt.Sprintf("RESULTSET · %d columns · %d rows", columnCount, rowCount), Size: stream.size, Truncated: stream.truncated}
-	if textRows && len(rows) > 0 {
+	if len(rows) > 0 {
+		columns := make([]string, len(definitions))
+		for index := range definitions {
+			columns[index] = definitions[index].name
+		}
 		encoded, _ := json.Marshal(map[string]any{"columns": columns, "rows": rows})
 		payload.Kind = "json"
 		payload.JSON = encoded
-		if len(rows) < rowCount {
+		if len(rows) < rowCount || decodedValuesTruncated {
 			payload.Truncated = true
 		}
 	}
-	result := responseInfo{payload: payload, outcome: "ok", status: status, columns: int(columnCount), rows: rowCount}
+	result := responseInfo{payload: payload, outcome: "ok", status: status, columns: int(columnCount), rows: rowCount, definitions: definitions}
 	if status&serverMoreResultsExists != 0 {
 		return readMoreResults(stream, result, commandInfo{code: comQuery})
 	}
@@ -310,20 +368,28 @@ func readPrepareResponse(stream *responseStream) (responseInfo, error) {
 	statementID := binary.LittleEndian.Uint32(first.payload[1:5])
 	columns := int(binary.LittleEndian.Uint16(first.payload[5:7]))
 	parameters := int(binary.LittleEndian.Uint16(first.payload[7:9]))
+	parameterDefinitions := make([]columnDefinition, 0, parameters)
 	for range parameters {
-		if _, err := stream.next(); err != nil {
+		definition, err := stream.next()
+		if err != nil {
 			return responseInfo{}, err
 		}
+		parsed, _ := parseColumnDefinition(definition.payload, len(parameterDefinitions))
+		parameterDefinitions = append(parameterDefinitions, parsed)
 	}
 	if parameters > 0 && stream.capabilities&clientDeprecateEOF == 0 {
 		if _, err := stream.next(); err != nil {
 			return responseInfo{}, err
 		}
 	}
+	columnDefinitions := make([]columnDefinition, 0, columns)
 	for range columns {
-		if _, err := stream.next(); err != nil {
+		definition, err := stream.next()
+		if err != nil {
 			return responseInfo{}, err
 		}
+		parsed, _ := parseColumnDefinition(definition.payload, len(columnDefinitions))
+		columnDefinitions = append(columnDefinitions, parsed)
 	}
 	if columns > 0 && stream.capabilities&clientDeprecateEOF == 0 {
 		if _, err := stream.next(); err != nil {
@@ -331,11 +397,12 @@ func readPrepareResponse(stream *responseStream) (responseInfo, error) {
 		}
 	}
 	summary := fmt.Sprintf("PREPARED · id %d · %d params · %d columns", statementID, parameters, columns)
-	return responseInfo{payload: observation.Payload{Kind: "mysql", Summary: summary, Text: summary, Size: stream.size, Truncated: stream.truncated}, outcome: "ok", statementID: statementID, parameters: parameters, columns: columns}, nil
+	return responseInfo{payload: observation.Payload{Kind: "mysql", Summary: summary, Text: summary, Size: stream.size, Truncated: stream.truncated}, outcome: "ok", statementID: statementID, parameters: parameters, columns: columns, definitions: columnDefinitions}, nil
 }
 
-func readUntilTerminator(stream *responseStream, binaryRows bool) (responseInfo, error) {
+func readUntilTerminator(stream *responseStream, columns []columnDefinition) (responseInfo, error) {
 	count := 0
+	rows := make([][]any, 0)
 	for {
 		item, err := stream.next()
 		if err != nil {
@@ -349,12 +416,26 @@ func readUntilTerminator(stream *responseStream, binaryRows bool) (responseInfo,
 			break
 		}
 		count++
+		if len(columns) > 0 && len(rows) < 100 {
+			if values, decodeErr := decodeBinaryRow(item.payload, columns); decodeErr == nil {
+				rows = append(rows, values)
+			}
+		}
 	}
 	label := "definitions"
-	if binaryRows {
+	if len(columns) > 0 {
 		label = "rows"
 	}
-	return responseInfo{payload: observation.Payload{Kind: "mysql", Summary: fmt.Sprintf("%d %s", count, label), Size: stream.size, Truncated: stream.truncated}, outcome: "ok", rows: count}, nil
+	payload := observation.Payload{Kind: "mysql", Summary: fmt.Sprintf("%d %s", count, label), Size: stream.size, Truncated: stream.truncated}
+	if len(rows) > 0 {
+		names := make([]string, len(columns))
+		for index := range columns {
+			names[index] = columns[index].name
+		}
+		payload.Kind = "json"
+		payload.JSON, _ = json.Marshal(map[string]any{"columns": names, "rows": rows})
+	}
+	return responseInfo{payload: payload, outcome: "ok", rows: count}, nil
 }
 
 func parseOK(payload []byte, capabilities uint32) (status uint16, affected, lastID uint64, err error) {
@@ -402,20 +483,6 @@ func terminatorStatus(payload []byte, capabilities uint32) (uint16, error) {
 
 func isEOFPacket(payload []byte) bool {
 	return len(payload) > 0 && payload[0] == 0xfe && len(payload) < 9
-}
-
-func columnName(payload []byte, fallback int) string {
-	offset := 0
-	for index := 0; index < 6; index++ {
-		value, _, err := readLenencBytes(payload, &offset)
-		if err != nil {
-			return "column_" + strconv.Itoa(fallback+1)
-		}
-		if index == 4 && len(value) > 0 {
-			return string(value)
-		}
-	}
-	return "column_" + strconv.Itoa(fallback+1)
 }
 
 func decodeTextRow(payload []byte, columns int) ([]any, error) {
