@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-web build test lint fmt run demo clean
+.PHONY: dev dev-api dev-web build test test-mysql-matrix lint fmt run demo clean
 
 GO_CACHE ?= /tmp/portscope-go-cache
 
@@ -21,6 +21,9 @@ build:
 test:
 	npm run build
 	GOCACHE=$(GO_CACHE) go test ./cmd/... ./internal/...
+
+test-mysql-matrix:
+	./scripts/test-mysql-matrix.sh
 
 lint:
 	npm run lint

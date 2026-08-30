@@ -6,7 +6,7 @@ Portscope currently has three real protocol adapters:
 
 - **HTTP/1.1 + HTTP/2 + WebSocket:** HTTP/1.1, cleartext HTTP/2 (`h2c`), and HTTP/2 over TLS on both sides; classic RFC 6455 WebSocket upgrades over HTTP or HTTPS; streaming capture up to 256 KiB per body or WebSocket frame; trailers; JSON rendering; request/response header policies; custom CAs; mutual TLS; and automatic or configured credential redaction.
 - **Redis RESP2/RESP3:** terminated listener authentication, an independently authenticated upstream session, nested frame parsing, ordered pipeline correlation, error and push-frame observation, 64 MiB frame bounds, locally enforced database state, TLS and mutual TLS on either leg, and secret-safe capture.
-- **MySQL classic protocol:** terminated listener authentication, an independently authenticated upstream session, TLS on either leg, `mysql_native_password` listener verification, upstream native and `caching_sha2_password` authentication, text and binary result decoding, prepared-parameter inspection, safe long-data accounting, errors and affected-row summaries, and multi-result handling.
+- **MySQL classic protocol:** MySQL 5.6 through current (including 5.7, 8.0, 8.4 LTS, 9.7 LTS, and 26.7); terminated listener authentication; an independently authenticated upstream session; TLS on either leg; `mysql_native_password` listener verification; upstream native, `sha256_password`, and `caching_sha2_password` authentication; text and binary result decoding; prepared-parameter inspection; safe long-data accounting; errors and affected-row summaries; and multi-result handling.
 
 On first run Portscope creates an **Echo Lab** HTTP upstream on `127.0.0.1:9081`. “Generate traffic” sends three real requests through that proxy, so the interface is useful immediately.
 
@@ -26,6 +26,7 @@ For frontend hot reload:
 ```bash
 make dev       # API on :8090, Vite UI on :5173
 make test      # frontend production build + Go unit/integration tests
+make test-mysql-matrix # disposable real servers from MySQL 5.6 through current
 make lint      # TypeScript, gofmt, and go vet
 make build     # one binary with the React UI embedded
 ```
@@ -50,7 +51,7 @@ Use an upstream’s `•••` action to edit it. Configuration updates restart
 
 ## Architecture and limits
 
-The key design is documented in [docs/architecture.md](docs/architecture.md). Protocol adapters share lifecycle and the observation envelope, not parser or session semantics.
+The key design is documented in [docs/architecture.md](docs/architecture.md). Protocol adapters share lifecycle and the observation envelope, not parser or session semantics. The exact MySQL version and feature contract is in [docs/mysql-compatibility.md](docs/mysql-compatibility.md).
 
 Current honest limits:
 

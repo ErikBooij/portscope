@@ -78,14 +78,21 @@ type authenticatedUpstream struct {
 	tls          bool
 }
 
-func makeGreeting(connectionID uint32, scramble []byte, capabilities uint32, allowTLS bool) []byte {
+func makeGreeting(connectionID uint32, scramble []byte, capabilities uint32, allowTLS bool, serverVersion string) []byte {
+	return makeGreetingForPlugin(connectionID, scramble, capabilities, allowTLS, serverVersion, "mysql_native_password")
+}
+
+func makeGreetingForPlugin(connectionID uint32, scramble []byte, capabilities uint32, allowTLS bool, serverVersion, plugin string) []byte {
 	capabilities &= inspectableCapabilities
 	capabilities |= clientProtocol41 | clientSecureConnection | clientPluginAuth
 	if allowTLS {
 		capabilities |= clientSSL
 	}
 	payload := []byte{10}
-	payload = append(payload, "8.0.0-portscope"...)
+	if serverVersion == "" {
+		serverVersion = "5.6.0-portscope"
+	}
+	payload = append(payload, serverVersion...)
 	payload = append(payload, 0)
 	var id [4]byte
 	binary.LittleEndian.PutUint32(id[:], connectionID)
@@ -95,9 +102,25 @@ func makeGreeting(connectionID uint32, scramble []byte, capabilities uint32, all
 	payload = append(payload, make([]byte, 10)...)
 	payload = append(payload, scramble[8:20]...)
 	payload = append(payload, 0)
-	payload = append(payload, "mysql_native_password"...)
+	payload = append(payload, plugin...)
 	payload = append(payload, 0)
 	return payload
+}
+
+func proxyServerVersion(upstreamVersion string) string {
+	upstreamVersion = strings.TrimSpace(strings.SplitN(upstreamVersion, "\x00", 2)[0])
+	if upstreamVersion == "" {
+		upstreamVersion = "5.6.0"
+	}
+	// Some clients use the greeting for compatibility decisions. Preserve the
+	// actual upstream version and identify the terminating hop without inventing
+	// a newer server than the one behind it.
+	const suffix = "-portscope"
+	const maxVersionLength = 60
+	if len(upstreamVersion) > maxVersionLength-len(suffix) {
+		upstreamVersion = upstreamVersion[:maxVersionLength-len(suffix)]
+	}
+	return upstreamVersion + suffix
 }
 
 func parseGreeting(payload []byte) (greeting, error) {
@@ -214,8 +237,8 @@ func parseClientHandshake(payload []byte) (clientHandshake, error) {
 	return clientHandshake{capabilities: capabilities, username: username, database: database, plugin: plugin, authResponse: auth}, nil
 }
 
-func buildHandshakeResponse(capabilities uint32, username, password, database, plugin string, scramble []byte) ([]byte, error) {
-	auth, err := authenticationResponse(plugin, password, scramble)
+func buildHandshakeResponse(capabilities uint32, username, password, database, plugin string, scramble []byte, secure bool) ([]byte, error) {
+	auth, err := authenticationResponseForTransport(plugin, password, scramble, secure)
 	if err != nil {
 		return nil, err
 	}
@@ -265,22 +288,39 @@ func appendLenenc(target []byte, value uint64) []byte {
 }
 
 func authenticationResponse(plugin, password string, scramble []byte) ([]byte, error) {
-	if password == "" {
-		return nil, nil
-	}
+	return authenticationResponseForTransport(plugin, password, scramble, false)
+}
+
+func authenticationResponseForTransport(plugin, password string, scramble []byte, secure bool) ([]byte, error) {
 	switch plugin {
 	case "mysql_native_password", "":
+		if password == "" {
+			return nil, nil
+		}
 		stage1 := sha1.Sum([]byte(password))
 		stage2 := sha1.Sum(stage1[:])
 		input := append(append([]byte(nil), scramble...), stage2[:]...)
 		digest := sha1.Sum(input)
 		return xorBytes(stage1[:], digest[:]), nil
 	case "caching_sha2_password":
+		if password == "" {
+			return nil, nil
+		}
 		stage1 := sha256.Sum256([]byte(password))
 		stage2 := sha256.Sum256(stage1[:])
 		input := append(append([]byte(nil), stage2[:]...), scramble...)
 		digest := sha256.Sum256(input)
 		return xorBytes(stage1[:], digest[:]), nil
+	case "sha256_password":
+		if password == "" {
+			return []byte{0}, nil
+		}
+		if secure {
+			return append([]byte(password), 0), nil
+		}
+		// sha256_password uses 0x01 (not caching_sha2_password's 0x02)
+		// to request the server RSA public key on a plaintext connection.
+		return []byte{0x01}, nil
 	default:
 		return nil, fmt.Errorf("unsupported MySQL authentication plugin %q", plugin)
 	}
@@ -327,13 +367,7 @@ func openUpstream(ctx context.Context, upstream config.Upstream) (*authenticated
 func authenticateUpstream(ctx context.Context, upstream config.Upstream, session *authenticatedUpstream, requested uint32) error {
 	options := *upstream.MySQL
 	fail := func(err error) error { _ = session.connection.Close(); return err }
-	capabilities := session.greeting.capabilities & requested & inspectableCapabilities
-	capabilities &^= clientCompress | clientZSTDCompression | clientLocalFiles | clientOptionalResultsetMetadata | clientQueryAttributes | clientConnectAttrs
-	if options.Database != "" && session.greeting.capabilities&clientConnectWithDB != 0 {
-		capabilities |= clientConnectWithDB
-	} else {
-		capabilities &^= clientConnectWithDB
-	}
+	capabilities := upstreamCapabilities(session.greeting.capabilities, requested, options.Database != "")
 	sequence := byte(1)
 	usingTLS := false
 	if options.UpstreamTLS.Enabled {
@@ -362,7 +396,7 @@ func authenticateUpstream(ctx context.Context, upstream config.Upstream, session
 		session.reader = bufio.NewReader(secure)
 		usingTLS = true
 	}
-	response, err := buildHandshakeResponse(capabilities, options.UpstreamUsername, options.UpstreamPassword, options.Database, session.greeting.plugin, session.greeting.scramble)
+	response, err := buildHandshakeResponse(capabilities, options.UpstreamUsername, options.UpstreamPassword, options.Database, session.greeting.plugin, session.greeting.scramble, usingTLS)
 	if err != nil {
 		return fail(err)
 	}
@@ -370,6 +404,8 @@ func authenticateUpstream(ctx context.Context, upstream config.Upstream, session
 		return fail(err)
 	}
 	sequence++
+	activePlugin := session.greeting.plugin
+	activeScramble := append([]byte(nil), session.greeting.scramble...)
 	for {
 		item, readErr := readPacket(session.reader)
 		if readErr != nil {
@@ -396,7 +432,7 @@ func authenticateUpstream(ctx context.Context, upstream config.Upstream, session
 				return fail(errors.New("invalid MySQL auth switch request"))
 			}
 			scramble := bytes.TrimSuffix(item.payload[offset:], []byte{0})
-			auth, authErr := authenticationResponse(plugin, options.UpstreamPassword, scramble)
+			auth, authErr := authenticationResponseForTransport(plugin, options.UpstreamPassword, scramble, usingTLS)
 			if authErr != nil {
 				return fail(authErr)
 			}
@@ -404,8 +440,20 @@ func authenticateUpstream(ctx context.Context, upstream config.Upstream, session
 				return fail(err)
 			}
 			sequence++
-			session.greeting.plugin, session.greeting.scramble = plugin, append([]byte(nil), scramble...)
+			activePlugin, activeScramble = plugin, append([]byte(nil), scramble...)
+			session.greeting.plugin, session.greeting.scramble = activePlugin, activeScramble
 		case 0x01:
+			if activePlugin == "sha256_password" && len(item.payload) > 1 {
+				auth, keyErr := encryptPassword(options.UpstreamPassword, activeScramble, item.payload[1:])
+				if keyErr != nil {
+					return fail(keyErr)
+				}
+				if err := writePacket(session.connection, packet{sequence: sequence, payload: auth}); err != nil {
+					return fail(err)
+				}
+				sequence++
+				continue
+			}
 			if len(item.payload) >= 2 && item.payload[1] == 0x03 {
 				continue
 			}
@@ -430,7 +478,7 @@ func authenticateUpstream(ctx context.Context, upstream config.Upstream, session
 					if len(keyData) > 0 && keyData[0] == 0x01 {
 						keyData = keyData[1:]
 					}
-					auth, keyErr = encryptPassword(options.UpstreamPassword, session.greeting.scramble, keyData)
+					auth, keyErr = encryptPassword(options.UpstreamPassword, activeScramble, keyData)
 					if keyErr != nil {
 						return fail(keyErr)
 					}
@@ -443,9 +491,35 @@ func authenticateUpstream(ctx context.Context, upstream config.Upstream, session
 			}
 			return fail(errors.New("unsupported MySQL authentication continuation"))
 		default:
+			if activePlugin == "sha256_password" && bytes.HasPrefix(item.payload, []byte("-----BEGIN")) {
+				auth, keyErr := encryptPassword(options.UpstreamPassword, activeScramble, item.payload)
+				if keyErr != nil {
+					return fail(keyErr)
+				}
+				if err := writePacket(session.connection, packet{sequence: sequence, payload: auth}); err != nil {
+					return fail(err)
+				}
+				sequence++
+				continue
+			}
 			return fail(fmt.Errorf("unexpected MySQL authentication packet 0x%02x", item.payload[0]))
 		}
 	}
+}
+
+func upstreamCapabilities(server, downstream uint32, connectWithDatabase bool) uint32 {
+	// Authentication is terminated, so upstream auth negotiation must not be
+	// limited by an older downstream connector. Response-shaping and query
+	// semantics remain mirrored because packets are forwarded unchanged.
+	const independent = clientLongPassword | clientLongFlag | clientProtocol41 | clientTransactions |
+		clientSecureConnection | clientPluginAuth | clientPluginAuthLenencClientData
+	const mirrored = clientFoundRows | clientMultiStatements | clientMultiResults | clientPSMultiResults |
+		clientSessionTrack | clientDeprecateEOF
+	capabilities := server & inspectableCapabilities & (independent | (downstream & mirrored))
+	if connectWithDatabase && server&clientConnectWithDB != 0 {
+		capabilities |= clientConnectWithDB
+	}
+	return capabilities
 }
 
 func encryptPassword(password string, scramble, keyData []byte) ([]byte, error) {

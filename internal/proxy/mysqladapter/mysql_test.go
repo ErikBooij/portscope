@@ -2,11 +2,22 @@ package mysqladapter
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
 	"math"
+	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +46,7 @@ func TestAdapterTerminatesAuthenticationAndCapturesTextResult(t *testing.T) {
 		}
 		defer connection.Close()
 		capabilities := inspectableCapabilities | clientCompress | clientLocalFiles | clientQueryAttributes
-		if err := writePacket(connection, packet{sequence: 0, payload: makeGreeting(77, serverScramble, capabilities, false)}); err != nil {
+		if err := writePacket(connection, packet{sequence: 0, payload: makeGreeting(77, serverScramble, capabilities, false, "5.6.51")}); err != nil {
 			serverDone <- err
 			return
 		}
@@ -128,11 +139,11 @@ func TestAdapterTerminatesAuthenticationAndCapturesTextResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proxyGreeting.serverVersion != "8.0.0-portscope" || proxyGreeting.capabilities&(clientCompress|clientLocalFiles|clientQueryAttributes) != 0 {
+	if proxyGreeting.serverVersion != "5.6.51-portscope" || proxyGreeting.capabilities&(clientCompress|clientLocalFiles|clientQueryAttributes) != 0 {
 		t.Fatalf("unsafe proxy greeting: %#v", proxyGreeting)
 	}
 	clientCapabilities := clientProtocol41 | clientSecureConnection | clientPluginAuth | clientConnectWithDB
-	handshake, err := buildHandshakeResponse(clientCapabilities, "application", "listener-password", "ignored-client-db", "mysql_native_password", proxyGreeting.scramble)
+	handshake, err := buildHandshakeResponse(clientCapabilities, "application", "listener-password", "ignored-client-db", "mysql_native_password", proxyGreeting.scramble, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,6 +234,343 @@ func TestNativeAndCachingSHA2AuthenticationResponses(t *testing.T) {
 	if err != nil || len(caching) != 32 || string(caching) == string(native) {
 		t.Fatalf("caching SHA-2 response invalid: %x, %v", caching, err)
 	}
+	shaRequest, err := authenticationResponseForTransport("sha256_password", "secret", scramble, false)
+	if err != nil || !bytes.Equal(shaRequest, []byte{0x01}) {
+		t.Fatalf("SHA-256 RSA request invalid: %x, %v", shaRequest, err)
+	}
+	shaTLS, err := authenticationResponseForTransport("sha256_password", "secret", scramble, true)
+	if err != nil || string(shaTLS) != "secret\x00" {
+		t.Fatalf("SHA-256 TLS response invalid: %x, %v", shaTLS, err)
+	}
+}
+
+func TestUpstreamCapabilitiesTerminateAuthenticationButMirrorWireSemantics(t *testing.T) {
+	server := inspectableCapabilities | clientCompress | clientQueryAttributes
+	legacyClient := clientProtocol41 | clientSecureConnection
+	capabilities := upstreamCapabilities(server, legacyClient, true)
+	if capabilities&clientPluginAuth == 0 || capabilities&clientPluginAuthLenencClientData == 0 {
+		t.Fatalf("upstream plugin auth was constrained by the legacy client: %#x", capabilities)
+	}
+	if capabilities&clientDeprecateEOF != 0 || capabilities&clientSessionTrack != 0 {
+		t.Fatalf("response-shaping capabilities were not mirrored: %#x", capabilities)
+	}
+	if capabilities&clientConnectWithDB == 0 {
+		t.Fatalf("configured upstream database was not negotiated: %#x", capabilities)
+	}
+	if capabilities&(clientCompress|clientQueryAttributes) != 0 {
+		t.Fatalf("unsupported capabilities escaped the inspection boundary: %#x", capabilities)
+	}
+}
+
+func TestProxyGreetingPreservesUpstreamCompatibilityVersion(t *testing.T) {
+	for _, test := range []struct {
+		upstream string
+		want     string
+	}{
+		{upstream: "5.6.51", want: "5.6.51-portscope"},
+		{upstream: "5.7.44-log", want: "5.7.44-log-portscope"},
+		{upstream: "8.0.45", want: "8.0.45-portscope"},
+		{upstream: "8.4.12", want: "8.4.12-portscope"},
+		{upstream: "9.7.1", want: "9.7.1-portscope"},
+		{upstream: "", want: "5.6.0-portscope"},
+	} {
+		if got := proxyServerVersion(test.upstream); got != test.want {
+			t.Errorf("proxyServerVersion(%q) = %q, want %q", test.upstream, got, test.want)
+		}
+	}
+}
+
+func TestSHA256PasswordRSAAuthenticationAgainstLegacyServer(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedKey := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicKey})
+	scramble := []byte("legacy-sha256-seed!!")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer connection.Close()
+		greetingPayload := makeGreetingForPlugin(56, scramble, inspectableCapabilities, false, "5.6.51", "sha256_password")
+		if err := writePacket(connection, packet{sequence: 0, payload: greetingPayload}); err != nil {
+			serverDone <- err
+			return
+		}
+		reader := bufio.NewReader(connection)
+		handshakePacket, err := readPacket(reader)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		handshake, err := parseClientHandshake(handshakePacket.payload)
+		if err != nil || handshake.plugin != "sha256_password" || !bytes.Equal(handshake.authResponse, []byte{0x01}) {
+			serverDone <- errUnexpected("proxy did not request the legacy SHA-256 RSA key")
+			return
+		}
+		if err := writePacket(connection, packet{sequence: 2, payload: append([]byte{0x01}, encodedKey...)}); err != nil {
+			serverDone <- err
+			return
+		}
+		encrypted, err := readPacket(reader)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		plain, err := rsa.DecryptOAEP(sha1.New(), rand.Reader, privateKey, encrypted.payload, nil)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		for index := range plain {
+			plain[index] ^= scramble[index%len(scramble)]
+		}
+		if string(plain) != "database-password\x00" {
+			serverDone <- errUnexpected("proxy encrypted the wrong upstream password")
+			return
+		}
+		serverDone <- writePacket(connection, packet{sequence: 4, payload: mysqlOKPayload()})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	upstream := config.Upstream{Target: listener.Addr().String(), MySQL: &config.MySQLOptions{UpstreamUsername: "database-user", UpstreamPassword: "database-password"}}
+	session, err := openUpstream(ctx, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.connection.Close()
+	// Model a connector old enough not to advertise pluggable auth. The proxy's
+	// independently authenticated upstream leg must still negotiate it.
+	if err := authenticateUpstream(ctx, upstream, session, clientProtocol41|clientSecureConnection); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpstreamTLSUpgradeVerifiesCertificate(t *testing.T) {
+	serverTLS, caPath, _, _ := mysqlTestTLSCertificate(t)
+	scramble := []byte("tls-upstream-seed!!!")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer connection.Close()
+		if err := writePacket(connection, packet{sequence: 0, payload: makeGreeting(84, scramble, inspectableCapabilities, true, "8.4.11")}); err != nil {
+			serverDone <- err
+			return
+		}
+		reader := bufio.NewReader(connection)
+		request, err := readPacket(reader)
+		if err != nil || request.sequence != 1 || !isSSLRequest(request.payload) {
+			serverDone <- errUnexpected("proxy did not send a valid MySQL SSLRequest")
+			return
+		}
+		secure := tls.Server(connection, serverTLS)
+		if err := secure.Handshake(); err != nil {
+			serverDone <- err
+			return
+		}
+		handshakePacket, err := readPacket(bufio.NewReader(secure))
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		handshake, err := parseClientHandshake(handshakePacket.payload)
+		if err != nil || handshakePacket.sequence != 2 || !verifyNativePassword(handshake.authResponse, "database-password", scramble) {
+			serverDone <- errUnexpected("invalid authenticated handshake inside MySQL TLS")
+			return
+		}
+		serverDone <- writePacket(secure, packet{sequence: 3, payload: mysqlOKPayload()})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	upstream := config.Upstream{Target: listener.Addr().String(), MySQL: &config.MySQLOptions{
+		UpstreamUsername: "database-user", UpstreamPassword: "database-password",
+		UpstreamTLS: config.ClientTLSOptions{Enabled: true, CAFile: caPath},
+	}}
+	session, err := openUpstream(ctx, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.connection.Close()
+	if err := authenticateUpstream(ctx, upstream, session, inspectableCapabilities); err != nil {
+		t.Fatal(err)
+	}
+	if !session.tls {
+		t.Fatal("authenticated upstream session did not record TLS")
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListenerTLSUpgradeAuthenticatesApplication(t *testing.T) {
+	_, caPath, certPath, keyPath := mysqlTestTLSCertificate(t)
+	upstreamListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upstreamListener.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		connection, acceptErr := upstreamListener.Accept()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer connection.Close()
+		scramble := []byte("listener-tls-seed!!!")
+		if err := writePacket(connection, packet{sequence: 0, payload: makeGreeting(97, scramble, inspectableCapabilities, false, "9.7.2")}); err != nil {
+			serverDone <- err
+			return
+		}
+		handshakePacket, err := readPacket(bufio.NewReader(connection))
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		handshake, err := parseClientHandshake(handshakePacket.payload)
+		if err != nil || !verifyNativePassword(handshake.authResponse, "upstream-secret", scramble) {
+			serverDone <- errUnexpected("proxy sent invalid independent upstream credentials")
+			return
+		}
+		serverDone <- writePacket(connection, packet{sequence: 2, payload: mysqlOKPayload()})
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan string, 1)
+	events := make(chan observation.Interaction, 4)
+	configured := config.Upstream{
+		ID: "mysql-listener-tls", Name: "MySQL listener TLS", Protocol: "mysql", Enabled: true,
+		ListenAddr: "127.0.0.1:0", Target: upstreamListener.Addr().String(),
+		ListenerTLS: &config.ListenerTLSOptions{Enabled: true, CertFile: certPath, KeyFile: keyPath},
+		MySQL:       &config.MySQLOptions{ListenerUsername: "application", ListenerPassword: "listener-secret", UpstreamUsername: "database", UpstreamPassword: "upstream-secret"},
+	}
+	go func() {
+		_ = New().Run(ctx, configured, testSink{events: events}, func(address string) { ready <- address })
+	}()
+	plain, err := net.Dial("tcp", <-ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Close()
+	reader := bufio.NewReader(plain)
+	greetingPacket, err := readPacket(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	greeting, err := parseGreeting(greetingPacket.payload)
+	if err != nil || greeting.capabilities&clientSSL == 0 {
+		t.Fatalf("listener greeting does not advertise TLS: %#v, %v", greeting, err)
+	}
+	capabilities := clientProtocol41 | clientSecureConnection | clientPluginAuth | clientSSL
+	sslRequest := make([]byte, 32)
+	binary.LittleEndian.PutUint32(sslRequest, capabilities)
+	binary.LittleEndian.PutUint32(sslRequest[4:], 64<<20)
+	sslRequest[8] = 45
+	if err := writePacket(plain, packet{sequence: 1, payload: sslRequest}); err != nil {
+		t.Fatal(err)
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		t.Fatal("could not load MySQL listener test CA")
+	}
+	secure := tls.Client(plain, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: "127.0.0.1"})
+	if err := secure.HandshakeContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	response, err := buildHandshakeResponse(capabilities, "application", "listener-secret", "", "mysql_native_password", greeting.scramble, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writePacket(secure, packet{sequence: 2, payload: response}); err != nil {
+		t.Fatal(err)
+	}
+	authOK, err := readPacket(bufio.NewReader(secure))
+	if err != nil || authOK.sequence != 3 || len(authOK.payload) == 0 || authOK.payload[0] != 0x00 {
+		t.Fatalf("listener TLS authentication = %#v, %v", authOK, err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-events:
+		if event.Operation != "CONNECT" || event.Attributes["downstreamTLS"] != "true" {
+			t.Fatalf("listener TLS observation = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing listener TLS connection observation")
+	}
+}
+
+func mysqlTestTLSCertificate(t *testing.T) (*tls.Config, string, string, string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Portscope MySQL test"},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IsCA: true, BasicConstraintsValid: true,
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	caPath := filepath.Join(directory, "mysql-ca.pem")
+	if err := os.WriteFile(caPath, certPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	certPath := filepath.Join(directory, "mysql-cert.pem")
+	keyPath := filepath.Join(directory, "mysql-key.pem")
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}, caPath, certPath, keyPath
 }
 
 func TestPreparedStatementParametersAreDecodedAndTypesAreReused(t *testing.T) {
@@ -335,7 +683,7 @@ func TestWrongListenerCredentialsNeverReachUpstreamAuthentication(t *testing.T) 
 			return
 		}
 		defer connection.Close()
-		_ = writePacket(connection, packet{sequence: 0, payload: makeGreeting(1, []byte("12345678901234567890"), inspectableCapabilities, false)})
+		_ = writePacket(connection, packet{sequence: 0, payload: makeGreeting(1, []byte("12345678901234567890"), inspectableCapabilities, false, "9.7.1")})
 		_ = connection.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		_, readErr := readPacket(bufio.NewReader(connection))
 		receivedHandshake <- readErr == nil
@@ -355,7 +703,7 @@ func TestWrongListenerCredentialsNeverReachUpstreamAuthentication(t *testing.T) 
 	reader := bufio.NewReader(client)
 	greetingPacket, _ := readPacket(reader)
 	greeting, _ := parseGreeting(greetingPacket.payload)
-	response, _ := buildHandshakeResponse(clientProtocol41|clientSecureConnection|clientPluginAuth, "app", "wrong", "", "mysql_native_password", greeting.scramble)
+	response, _ := buildHandshakeResponse(clientProtocol41|clientSecureConnection|clientPluginAuth, "app", "wrong", "", "mysql_native_password", greeting.scramble, false)
 	_ = writePacket(client, packet{sequence: 1, payload: response})
 	denied, err := readPacket(reader)
 	if err != nil || len(denied.payload) == 0 || denied.payload[0] != 0xff {

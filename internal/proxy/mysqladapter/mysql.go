@@ -81,7 +81,7 @@ func (adapter *Adapter) handle(ctx context.Context, upstream config.Upstream, cl
 		return
 	}
 	localCapabilities := server.greeting.capabilities & inspectableCapabilities
-	if err := writePacket(client, packet{sequence: 0, payload: makeGreeting(localConnectionID, scramble, localCapabilities, listenerTLS != nil)}); err != nil {
+	if err := writePacket(client, packet{sequence: 0, payload: makeGreeting(localConnectionID, scramble, localCapabilities, listenerTLS != nil, proxyServerVersion(server.greeting.serverVersion))}); err != nil {
 		return
 	}
 	_ = client.SetDeadline(time.Now().Add(15 * time.Second))
