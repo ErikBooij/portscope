@@ -129,7 +129,7 @@ export default function App() {
       <section className="traffic-pane">
         <div className="toolbar">
           <label className="search"><span>⌕</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Filter operation, body, error…"/></label>
-          <div className="segmented"><button className={!protocolFilter ? "active" : ""} onClick={() => setProtocolFilter("")}>ALL</button><button className={protocolFilter === "http" ? "active" : ""} onClick={() => setProtocolFilter("http")}>HTTP</button><button className={protocolFilter === "websocket" ? "active" : ""} onClick={() => setProtocolFilter("websocket")}>WS</button><button className={protocolFilter === "elasticsearch" ? "active" : ""} onClick={() => setProtocolFilter("elasticsearch")}>SEARCH</button><button className={protocolFilter === "redis" ? "active" : ""} onClick={() => setProtocolFilter("redis")}>REDIS</button><button className={protocolFilter === "mysql" ? "active" : ""} onClick={() => setProtocolFilter("mysql")}>MYSQL</button><button className={protocolFilter === "postgres" ? "active" : ""} onClick={() => setProtocolFilter("postgres")}>PG</button><button className={protocolFilter === "mongodb" ? "active" : ""} onClick={() => setProtocolFilter("mongodb")}>MONGO</button><button className={protocolFilter === "rabbitmq" ? "active" : ""} onClick={() => setProtocolFilter("rabbitmq")}>AMQP</button></div>
+          <div className="segmented"><button className={!protocolFilter ? "active" : ""} onClick={() => setProtocolFilter("")}>ALL</button><button className={protocolFilter === "http" ? "active" : ""} onClick={() => setProtocolFilter("http")}>HTTP</button><button className={protocolFilter === "websocket" ? "active" : ""} onClick={() => setProtocolFilter("websocket")}>WS</button><button className={protocolFilter === "elasticsearch" ? "active" : ""} onClick={() => setProtocolFilter("elasticsearch")}>SEARCH</button><button className={protocolFilter === "grpc" ? "active" : ""} onClick={() => setProtocolFilter("grpc")}>GRPC</button><button className={protocolFilter === "redis" ? "active" : ""} onClick={() => setProtocolFilter("redis")}>REDIS</button><button className={protocolFilter === "mysql" ? "active" : ""} onClick={() => setProtocolFilter("mysql")}>MYSQL</button><button className={protocolFilter === "postgres" ? "active" : ""} onClick={() => setProtocolFilter("postgres")}>PG</button><button className={protocolFilter === "mongodb" ? "active" : ""} onClick={() => setProtocolFilter("mongodb")}>MONGO</button><button className={protocolFilter === "rabbitmq" ? "active" : ""} onClick={() => setProtocolFilter("rabbitmq")}>AMQP</button></div>
           <button className="clear" onClick={clearTraffic}>Clear</button>
         </div>
         <div className="table-head"><span>TIME</span><span>UPSTREAM</span><span>OPERATION</span><span>RESULT</span><span>DURATION</span><span>SIZE</span></div>
@@ -174,22 +174,24 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
     }
     onSave(draft);
   }
-  function selectProtocol(protocol: "http" | "elasticsearch" | "redis" | "mysql" | "postgres" | "mongodb" | "rabbitmq") {
+  function selectProtocol(protocol: Upstream["protocol"]) {
     if (protocol === draft.protocol) return;
     if (protocol === "http") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9000", target: "http://127.0.0.1:3000", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9000", target: "http://127.0.0.1:3000", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, grpc: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "elasticsearch") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9201", target: "http://127.0.0.1:9200", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9201", target: "http://127.0.0.1:9200", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, grpc: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
+    } else if (protocol === "grpc") {
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:50052", target: "h2c://127.0.0.1:50051", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, grpc: {}, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "redis") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:6380", target: "127.0.0.1:6379", http: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, listenerTls: undefined, redis: { database: 0, upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:6380", target: "127.0.0.1:6379", http: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, grpc: undefined, listenerTls: undefined, redis: { database: 0, upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "mysql") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:3307", target: "127.0.0.1:3306", http: undefined, redis: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, listenerTls: undefined, mysql: { listenerUsername: "portscope", upstreamUsername: "root", upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:3307", target: "127.0.0.1:3306", http: undefined, redis: undefined, postgres: undefined, mongodb: undefined, rabbitmq: undefined, grpc: undefined, listenerTls: undefined, mysql: { listenerUsername: "portscope", upstreamUsername: "root", upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "postgres") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:5433", target: "127.0.0.1:5432", http: undefined, redis: undefined, mysql: undefined, mongodb: undefined, rabbitmq: undefined, listenerTls: undefined, postgres: { listenerUsername: "portscope", upstreamUsername: "postgres", database: "postgres", upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:5433", target: "127.0.0.1:5432", http: undefined, redis: undefined, mysql: undefined, mongodb: undefined, rabbitmq: undefined, grpc: undefined, listenerTls: undefined, postgres: { listenerUsername: "portscope", upstreamUsername: "postgres", database: "postgres", upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "mongodb") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:27018", target: "127.0.0.1:27017", http: undefined, redis: undefined, mysql: undefined, postgres: undefined, rabbitmq: undefined, listenerTls: undefined, mongodb: { listenerAuthSource: "admin", upstreamAuthSource: "admin", authMechanism: "", upstreamTls: { ...emptyTLS } } });
-    } else {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:5673", target: "127.0.0.1:5672", http: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, listenerTls: undefined, rabbitmq: { listenerUsername: "portscope", listenerVhost: "/", upstreamUsername: "guest", upstreamVhost: "/", upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:27018", target: "127.0.0.1:27017", http: undefined, redis: undefined, mysql: undefined, postgres: undefined, rabbitmq: undefined, grpc: undefined, listenerTls: undefined, mongodb: { listenerAuthSource: "admin", upstreamAuthSource: "admin", authMechanism: "", upstreamTls: { ...emptyTLS } } });
+    } else if (protocol === "rabbitmq") {
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:5673", target: "127.0.0.1:5672", http: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, grpc: undefined, listenerTls: undefined, rabbitmq: { listenerUsername: "portscope", listenerVhost: "/", upstreamUsername: "guest", upstreamVhost: "/", upstreamTls: { ...emptyTLS } } });
     }
   }
   const httpOptions = draft.http ?? { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } };
@@ -198,6 +200,7 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
   const postgresOptions = draft.postgres ?? { listenerUsername: "portscope", upstreamUsername: "postgres", database: "postgres", upstreamTls: { ...emptyTLS } };
   const mongoOptions = draft.mongodb ?? { listenerAuthSource: "admin", upstreamAuthSource: "admin", authMechanism: "" as const, upstreamTls: { ...emptyTLS } };
   const rabbitOptions = draft.rabbitmq ?? { listenerUsername: "portscope", listenerVhost: "/", upstreamUsername: "guest", upstreamVhost: "/", upstreamTls: { ...emptyTLS } };
+  const grpcOptions = draft.grpc ?? {};
 
   return <div className="modal-backdrop" onMouseDown={onClose}>
     <form className="editor advanced-editor" onSubmit={submit} onMouseDown={event => event.stopPropagation()}>
@@ -206,6 +209,7 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
         <div className="protocol-field"><span className="field-caption">PROTOCOL</span><div className="protocol-choice">
           <button type="button" className={draft.protocol === "http" ? "active" : ""} onClick={() => selectProtocol("http")}><i className="protocol http">H</i><span><b>HTTP</b><small>HTTP/1.1 + HTTP/2 + WS</small></span></button>
           <button type="button" className={draft.protocol === "elasticsearch" ? "active" : ""} onClick={() => selectProtocol("elasticsearch")}><i className="protocol elasticsearch">E</i><span><b>SEARCH</b><small>ELASTIC + OPENSEARCH</small></span></button>
+          <button type="button" className={draft.protocol === "grpc" ? "active" : ""} onClick={() => selectProtocol("grpc")}><i className="protocol grpc">G</i><span><b>GRPC</b><small>HTTP/2 + PROTOBUF</small></span></button>
           <button type="button" className={draft.protocol === "redis" ? "active" : ""} onClick={() => selectProtocol("redis")}><i className="protocol redis">R</i><span><b>REDIS</b><small>RESP2 + RESP3</small></span></button>
           <button type="button" className={draft.protocol === "mysql" ? "active" : ""} onClick={() => selectProtocol("mysql")}><i className="protocol mysql">M</i><span><b>MYSQL</b><small>CLASSIC PROTOCOL</small></span></button>
           <button type="button" className={draft.protocol === "postgres" ? "active" : ""} onClick={() => selectProtocol("postgres")}><i className="protocol postgres">P</i><span><b>POSTGRESQL</b><small>PROTOCOL V3</small></span></button>
@@ -215,11 +219,12 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
         <label>DISPLAY NAME<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="Orders API"/></label>
         <div className="field-pair">
           <label>LISTEN ADDRESS<input value={draft.listenAddr} onChange={event => setDraft({ ...draft, listenAddr: event.target.value })} placeholder="127.0.0.1:9000"/><small>Your application connects here</small></label>
-          <label>UPSTREAM TARGET<input value={draft.target} onChange={event => setDraft({ ...draft, target: event.target.value })} placeholder={draft.protocol === "http" ? "https://api.internal" : draft.protocol === "elasticsearch" ? "https://search.internal:9200" : draft.protocol === "redis" ? "cache.internal:6379" : draft.protocol === "postgres" ? "postgres.internal:5432" : draft.protocol === "mongodb" ? "mongo.internal:27017" : draft.protocol === "rabbitmq" ? "rabbit.internal:5672" : "mysql.internal:3306"}/><small>{draft.protocol === "http" || draft.protocol === "elasticsearch" ? "http://, https://, or h2c://" : "host:port"}</small></label>
+          <label>UPSTREAM TARGET<input value={draft.target} onChange={event => setDraft({ ...draft, target: event.target.value })} placeholder={draft.protocol === "http" ? "https://api.internal" : draft.protocol === "elasticsearch" ? "https://search.internal:9200" : draft.protocol === "grpc" ? "https://grpc.internal:443" : draft.protocol === "redis" ? "cache.internal:6379" : draft.protocol === "postgres" ? "postgres.internal:5432" : draft.protocol === "mongodb" ? "mongo.internal:27017" : draft.protocol === "rabbitmq" ? "rabbit.internal:5672" : "mysql.internal:3306"}/><small>{draft.protocol === "grpc" ? "https:// or h2c://" : draft.protocol === "http" || draft.protocol === "elasticsearch" ? "http://, https://, or h2c://" : "host:port"}</small></label>
         </div>
 
         {draft.protocol === "http" && <HTTPSettings value={draft} options={httpOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "elasticsearch" && <HTTPSettings value={draft} options={httpOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
+        {draft.protocol === "grpc" && <GRPCSettings value={draft} httpOptions={httpOptions} grpcOptions={grpcOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "redis" && <RedisSettings value={draft} options={redisOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "mysql" && <MySQLSettings value={draft} options={mysqlOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "postgres" && <PostgresSettings value={draft} options={postgresOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
@@ -231,6 +236,17 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
       </div>
       <div className="editor-actions">{onDelete && <button className="delete" type="button" onClick={onDelete}>Remove upstream</button>}<span/><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy}>{busy ? "Applying…" : "Apply configuration"}</button></div>
     </form>
+  </div>;
+}
+
+function GRPCSettings({ value, httpOptions, grpcOptions, onChange }: { value: Upstream; httpOptions: NonNullable<Upstream["http"]>; grpcOptions: NonNullable<Upstream["grpc"]>; onChange: (value: Partial<Upstream>) => void }) {
+  return <div className="advanced-stack">
+    <details className="config-section" open>
+      <summary><span>PROTOBUF SCHEMA</span><small>{grpcOptions.descriptorSetFile ? "descriptor configured" : "wire framing only"}</small></summary>
+      <p className="section-help">Optional. A compiled descriptor set lets Portscope render protobuf messages as JSON; calls, streaming messages, compression, trailers, and status remain visible without one.</p>
+      <label>DESCRIPTOR SET FILE<input value={grpcOptions.descriptorSetFile ?? ""} onChange={event => onChange({ grpc: { ...grpcOptions, descriptorSetFile: event.target.value } })} placeholder="/path/to/service.protoset"/><small>Generate with protoc --include_imports --descriptor_set_out=service.protoset.</small></label>
+    </details>
+    <HTTPSettings value={value} options={httpOptions} onChange={onChange}/>
   </div>;
 }
 
@@ -449,6 +465,7 @@ function duration(value: number) { if (value < 1000) return `${value} µs`; if (
 function bytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`; return `${(value / 1024 / 1024).toFixed(1)} MB`; }
 function resultLabel(item: Interaction) {
   if (item.protocol === "http") return item.attributes?.status ?? (item.outcome === "ok" ? "OK" : "ERR");
+  if (item.protocol === "grpc") return item.attributes?.grpcCode ?? (item.outcome === "ok" ? "OK" : "ERR");
   if (item.protocol === "elasticsearch") {
     if (item.attributes?.bulkFailures && item.attributes.bulkFailures !== "0") return `${item.attributes.bulkFailures} FAIL`;
     if (item.attributes?.searchFailures && item.attributes.searchFailures !== "0") return `${item.attributes.searchFailures} FAIL`;
@@ -466,7 +483,7 @@ function resultLabel(item: Interaction) {
   }
   return item.outcome === "ok" ? "OK" : "ERR";
 }
-function protocolGlyph(protocol: Interaction["protocol"] | Upstream["protocol"]) { return protocol === "http" ? "H" : protocol === "websocket" ? "W" : protocol === "elasticsearch" ? "E" : protocol === "redis" ? "R" : protocol === "postgres" ? "P" : protocol === "mongodb" ? "D" : protocol === "rabbitmq" ? "Q" : "M"; }
+function protocolGlyph(protocol: Interaction["protocol"] | Upstream["protocol"]) { return protocol === "http" ? "H" : protocol === "websocket" ? "W" : protocol === "elasticsearch" ? "E" : protocol === "grpc" ? "G" : protocol === "redis" ? "R" : protocol === "postgres" ? "P" : protocol === "mongodb" ? "D" : protocol === "rabbitmq" ? "Q" : "M"; }
 function shortConnection(value?: string) { if (!value) return "—"; return value.length > 18 ? value.slice(0, 15) + "…" : value; }
 function matches(item: Interaction, query: string) {
   const text = [item.operation, item.request.summary, item.request.text, item.request.json ? JSON.stringify(item.request.json) : "", item.response.text, item.response.json ? JSON.stringify(item.response.json) : "", item.error, item.attributes ? JSON.stringify(item.attributes) : ""].filter(Boolean).join(" ").toLowerCase();

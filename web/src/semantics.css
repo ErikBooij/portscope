@@ -40,3 +40,9 @@
   color: #ffb265;
   background: rgba(255, 159, 67, .08);
 }
+
+.protocol.grpc {
+  border: 1px solid #51c2a3;
+  color: #72ddbf;
+  background: rgba(81, 194, 163, .08);
+}

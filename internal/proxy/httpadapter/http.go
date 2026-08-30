@@ -23,11 +23,20 @@ import (
 
 const captureLimit = 256 * 1024
 
-type Adapter struct{}
+type Adapter struct {
+	grpc *grpcProfile
+}
 
 func New() *Adapter { return &Adapter{} }
 
 func (a *Adapter) Run(ctx context.Context, upstream config.Upstream, sink observation.Sink, ready func(string)) error {
+	if upstream.Protocol == "grpc" {
+		profile, err := loadGRPCProfile(upstream.GRPC)
+		if err != nil {
+			return err
+		}
+		a.grpc = profile
+	}
 	listener, err := net.Listen("tcp", upstream.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", upstream.ListenAddr, err)
@@ -72,7 +81,7 @@ func (a *Adapter) Run(ctx context.Context, upstream config.Upstream, sink observ
 
 func (a *Adapter) handler(upstream config.Upstream, sink observation.Sink) http.Handler {
 	if upstream.Target == "internal://echo" {
-		return observed(upstream, sink, http.HandlerFunc(echo))
+		return observed(upstream, sink, http.HandlerFunc(echo), a.grpc)
 	}
 	target, _ := url.Parse(upstream.Target)
 	transport, transportErr := transportFor(upstream, target)
@@ -80,10 +89,15 @@ func (a *Adapter) handler(upstream config.Upstream, sink observation.Sink) http.
 		return observed(upstream, sink, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			request.Context().Value(exchangeKey{}).(*exchange).err = transportErr
 			http.Error(writer, "upstream TLS configuration invalid", http.StatusBadGateway)
-		}))
+		}), a.grpc)
 	}
 	websocketTransport, websocketTransportErr := websocketTransportFor(upstream, target)
 	return observed(upstream, sink, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if upstream.Protocol == "grpc" && (request.ProtoMajor != 2 || !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/grpc")) {
+			request.Context().Value(exchangeKey{}).(*exchange).err = errors.New("gRPC requires HTTP/2 and an application/grpc content type")
+			http.Error(writer, "gRPC requires HTTP/2", http.StatusUnsupportedMediaType)
+			return
+		}
 		if isWebSocketUpgrade(request) {
 			if websocketTransportErr != nil {
 				request.Context().Value(exchangeKey{}).(*exchange).err = websocketTransportErr
@@ -131,6 +145,11 @@ func (a *Adapter) handler(upstream config.Upstream, sink observation.Sink) http.
 		}
 		defer response.Body.Close()
 		metadata := request.Context().Value(exchangeKey{}).(*exchange)
+		if upstream.Protocol == "grpc" && response.ProtoMajor != 2 {
+			metadata.err = errors.New("gRPC upstream did not negotiate HTTP/2")
+			http.Error(writer, "gRPC upstream did not negotiate HTTP/2", http.StatusBadGateway)
+			return
+		}
 		metadata.upstreamProtocol = response.Proto
 		if response.TLS != nil {
 			metadata.upstreamTLS = tlsVersion(response.TLS.Version)
@@ -150,7 +169,8 @@ func (a *Adapter) handler(upstream config.Upstream, sink observation.Sink) http.
 		for name, values := range response.Trailer {
 			writer.Header()[http.TrailerPrefix+name] = values
 		}
-	}))
+		metadata.trailers = response.Trailer.Clone()
+	}), a.grpc)
 }
 
 func websocketTransportFor(upstream config.Upstream, target *url.URL) (*http.Transport, error) {
@@ -200,20 +220,43 @@ type exchange struct {
 	upstreamProtocol string
 	upstreamTLS      string
 	skipObservation  bool
+	trailers         http.Header
 }
 
-func observed(upstream config.Upstream, sink observation.Sink, next http.Handler) http.Handler {
+func observed(upstream config.Upstream, sink observation.Sink, next http.Handler, grpcProfile *grpcProfile) http.Handler {
 	sensitive := sensitiveHeaders(upstream)
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		started := time.Now()
+		callID := observation.NewID()
+		var grpcCall *grpcCallCapture
+		if upstream.Protocol == "grpc" {
+			grpcCall = newGRPCCallCapture(upstream, sink, grpcProfile, callID, request, started)
+		}
 		requestCapture := &captureBuffer{limit: captureLimit}
+		if grpcCall != nil {
+			requestCapture.onWrite = func(data []byte) {
+				grpcCall.request.setEncoding(request.Header.Get("Grpc-Encoding"))
+				grpcCall.request.feed(data)
+			}
+		}
 		if request.Body != nil {
 			request.Body = &teeReadCloser{Reader: io.TeeReader(request.Body, requestCapture), Closer: request.Body}
 		}
-		responseCapture := &captureWriter{ResponseWriter: writer, body: &captureBuffer{limit: captureLimit}, status: 200}
+		responseBody := &captureBuffer{limit: captureLimit}
+		responseCapture := &captureWriter{ResponseWriter: writer, body: responseBody, status: 200}
+		if grpcCall != nil {
+			responseBody.onWrite = func(data []byte) {
+				grpcCall.response.setEncoding(responseCapture.Header().Get("Grpc-Encoding"))
+				grpcCall.response.feed(data)
+			}
+		}
 		metadata := &exchange{}
 		request = request.WithContext(context.WithValue(request.Context(), exchangeKey{}, metadata))
 		next.ServeHTTP(responseCapture, request)
+		if grpcCall != nil {
+			grpcCall.finish(metadata, request, requestCapture, responseCapture)
+			return
+		}
 		if metadata.skipObservation {
 			return
 		}
@@ -248,9 +291,13 @@ type captureBuffer struct {
 	limit     int
 	total     int64
 	truncated bool
+	onWrite   func([]byte)
 }
 
 func (b *captureBuffer) Write(data []byte) (int, error) {
+	if b.onWrite != nil {
+		b.onWrite(data)
+	}
 	b.total += int64(len(data))
 	remaining := b.limit - b.Len()
 	if remaining > 0 {

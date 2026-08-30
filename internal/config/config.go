@@ -28,6 +28,7 @@ type Upstream struct {
 	Postgres    *PostgresOptions    `json:"postgres,omitempty"`
 	MongoDB     *MongoDBOptions     `json:"mongodb,omitempty"`
 	RabbitMQ    *RabbitMQOptions    `json:"rabbitmq,omitempty"`
+	GRPC        *GRPCOptions        `json:"grpc,omitempty"`
 }
 
 type ListenerTLSOptions struct {
@@ -163,6 +164,13 @@ type RabbitMQOptions struct {
 	UpstreamTLS         ClientTLSOptions `json:"upstreamTls,omitempty"`
 }
 
+// GRPCOptions adds protobuf semantics to the shared HTTP/2 transport. A
+// descriptor set is optional; framing, status, compression, and streaming
+// inspection remain available without one.
+type GRPCOptions struct {
+	DescriptorSetFile string `json:"descriptorSetFile,omitempty"`
+}
+
 type Store struct {
 	mu    sync.RWMutex
 	path  string
@@ -254,8 +262,8 @@ func Validate(item Upstream) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return errors.New("name is required")
 	}
-	if item.Protocol != "http" && item.Protocol != "elasticsearch" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" && item.Protocol != "mongodb" && item.Protocol != "rabbitmq" {
-		return errors.New("protocol must be http, elasticsearch, redis, mysql, postgres, mongodb, or rabbitmq")
+	if item.Protocol != "http" && item.Protocol != "elasticsearch" && item.Protocol != "grpc" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" && item.Protocol != "mongodb" && item.Protocol != "rabbitmq" {
+		return errors.New("protocol must be http, elasticsearch, grpc, redis, mysql, postgres, mongodb, or rabbitmq")
 	}
 	host, port, err := net.SplitHostPort(item.ListenAddr)
 	if err != nil || port == "" {
@@ -269,6 +277,9 @@ func Validate(item Upstream) error {
 	}
 	if item.Protocol == "http" || item.Protocol == "elasticsearch" {
 		return validateHTTP(item)
+	}
+	if item.Protocol == "grpc" {
+		return validateGRPC(item)
 	}
 	if item.Protocol == "redis" {
 		return validateRedis(item)
@@ -298,7 +309,7 @@ func validateHTTP(item Upstream) error {
 			return errors.New("HTTP target credentials are not allowed; inject an Authorization header instead")
 		}
 	}
-	if item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil {
+	if item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil || item.GRPC != nil {
 		return errors.New("database protocol settings are not valid for HTTP upstreams")
 	}
 	if item.HTTP == nil {
@@ -323,11 +334,43 @@ func validateHTTP(item Upstream) error {
 	return nil
 }
 
+func validateGRPC(item Upstream) error {
+	parsed, err := url.Parse(item.Target)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "h2c") || parsed.Host == "" {
+		return errors.New("gRPC target must be an https:// or h2c:// URL")
+	}
+	if parsed.User != nil {
+		return errors.New("gRPC target credentials are not allowed; inject authorization metadata instead")
+	}
+	if item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil {
+		return errors.New("database protocol settings are not valid for gRPC upstreams")
+	}
+	if item.GRPC == nil {
+		return errors.New("gRPC settings are required")
+	}
+	if item.HTTP != nil {
+		if item.HTTP.UpstreamTLS.Enabled && parsed.Scheme != "https" {
+			return errors.New("gRPC upstream TLS options require an https:// target")
+		}
+		if err := validateClientTLS(item.HTTP.UpstreamTLS, "gRPC upstream TLS"); err != nil {
+			return err
+		}
+		for _, group := range [][]HeaderRule{item.HTTP.RequestHeaders, item.HTTP.ResponseHeaders} {
+			for _, rule := range group {
+				if err := validateHeaderRule(rule); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func validateRedis(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("Redis target must be host:port")
 	}
-	if item.HTTP != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil {
+	if item.HTTP != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil || item.GRPC != nil {
 		return errors.New("other protocol settings are not valid for Redis upstreams")
 	}
 	if item.Redis == nil {
@@ -349,7 +392,7 @@ func validateMySQL(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("MySQL target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil {
+	if item.HTTP != nil || item.Redis != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil || item.GRPC != nil {
 		return errors.New("other protocol settings are not valid for MySQL upstreams")
 	}
 	if item.MySQL == nil {
@@ -371,7 +414,7 @@ func validatePostgres(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("PostgreSQL target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.MongoDB != nil || item.RabbitMQ != nil {
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.MongoDB != nil || item.RabbitMQ != nil || item.GRPC != nil {
 		return errors.New("other protocol settings are not valid for PostgreSQL upstreams")
 	}
 	if item.Postgres == nil {
@@ -396,7 +439,7 @@ func validateMongoDB(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("MongoDB target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.RabbitMQ != nil {
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.RabbitMQ != nil || item.GRPC != nil {
 		return errors.New("other protocol settings are not valid for MongoDB upstreams")
 	}
 	if item.MongoDB == nil {
@@ -424,7 +467,7 @@ func validateRabbitMQ(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("RabbitMQ target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil {
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil || item.GRPC != nil {
 		return errors.New("other protocol settings are not valid for RabbitMQ upstreams")
 	}
 	if item.RabbitMQ == nil {

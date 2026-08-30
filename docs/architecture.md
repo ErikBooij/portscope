@@ -16,7 +16,7 @@ An adapter owns everything callers should not need to understand: listening, ups
 
 The shared `Interaction` is an observation envelope, not a universal query abstraction. It standardizes identity, time, duration, outcome, request/response payloads, and searchable attributes. `Operation`, payload kind, and attributes retain protocol vocabulary. The UI can therefore offer shared filtering and timing while adding a protocol-specific renderer without teaching the manager or store about that protocol.
 
-This passes the multi-adapter test today: HTTP, Redis, MySQL, PostgreSQL, and MongoDB differ substantially behind the same small interface. Elasticsearch/OpenSearch also demonstrates a second extension shape: a semantic profile can deepen an existing transport adapter without duplicating its listener, TLS, mutation, streaming, or WebSocket implementation.
+This passes the multi-adapter test today: HTTP, Redis, MySQL, PostgreSQL, MongoDB, and RabbitMQ differ substantially behind the same small interface. Elasticsearch/OpenSearch and gRPC demonstrate a second extension shape: semantic profiles can deepen an existing transport adapter without duplicating its listener, TLS, mutation, or streaming implementation.
 
 ## Why database protocols remain substantial
 
@@ -41,6 +41,8 @@ Authorization, proxy-authorization, cookie, and set-cookie HTTP headers are reda
 TLS construction is another shared deep module used by every transport adapter. It owns the TLS 1.2 floor, system/custom trust roots, SNI overrides, client certificates, listener certificates, client-CA verification, and ALPN. HTTP-specific protocol selection, WebSocket upgrade/frame handling, Redis authentication/database state, MySQL handshakes, PostgreSQL SSLRequest/direct-TLS negotiation, MongoDB direct TLS, and RabbitMQ direct AMQPS remain inside their adapters.
 
 Semantic profiles are internal seams inside a transport adapter, not new runtime interfaces. The Elasticsearch/OpenSearch profile receives the already bounded, redacted HTTP observation and enriches its protocol vocabulary, structured payload, outcome, and searchable attributes. HTTP forwarding has no dependency on search semantics, and the runtime manager still sees only `Adapter.Run`.
+
+The gRPC profile attaches incrementally to the HTTP request and response streams. It reconstructs gRPC message envelopes independently of HTTP/2 DATA-frame boundaries, emits live per-message observations, and builds a bounded call summary from trailers. Optional protobuf descriptors deepen payload rendering and classify streaming cardinality without becoming necessary for correct forwarding. No message-sized allocation is derived from an untrusted wire length, and schema loading is bounded before a listener starts.
 
 Classic WebSockets are an internal seam within the HTTP adapter rather than a new runtime adapter. The upgrade retains HTTP header policy and TLS behavior, then the adapter hijacks the two HTTP/1.1 connections and streams RFC 6455 frames byte-for-byte. Inspection unmasks only the bounded capture copy; bytes forwarded to the upstream are never rewritten. Handshake and frame observations use the same shared envelope with a `websocket` protocol vocabulary and stable connection identity.
 
