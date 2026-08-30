@@ -91,6 +91,27 @@ func TestSecretsAreWriteOnlyAndPreservedOnEdit(t *testing.T) {
 	if mongoMerged.MongoDB.ListenerPassword != "listener-secret" || mongoMerged.MongoDB.UpstreamPassword != "database-secret" {
 		t.Fatal("blank write-only MongoDB passwords did not preserve existing secrets")
 	}
+
+	rabbitOriginal := Upstream{ID: "rabbit", Name: "rabbit", Protocol: "rabbitmq", ListenAddr: "127.0.0.1:5673", Target: "localhost:5672", RabbitMQ: &RabbitMQOptions{ListenerPassword: "listener-secret", UpstreamPassword: "broker-secret"}}
+	rabbitPublic := PublicUpstream(rabbitOriginal)
+	if rabbitPublic.RabbitMQ.ListenerPassword != "" || !rabbitPublic.RabbitMQ.ListenerPasswordSet || rabbitPublic.RabbitMQ.UpstreamPassword != "" || !rabbitPublic.RabbitMQ.UpstreamPasswordSet {
+		t.Fatalf("public RabbitMQ credentials leaked or lost state: %#v", rabbitPublic.RabbitMQ)
+	}
+	rabbitMerged := MergeSecrets(rabbitPublic, rabbitOriginal)
+	if rabbitMerged.RabbitMQ.ListenerPassword != "listener-secret" || rabbitMerged.RabbitMQ.UpstreamPassword != "broker-secret" {
+		t.Fatal("blank write-only RabbitMQ passwords did not preserve existing secrets")
+	}
+}
+
+func TestValidateRabbitMQRequiresSeparatedConnectionSettings(t *testing.T) {
+	valid := Upstream{Name: "Messages", Protocol: "rabbitmq", ListenAddr: "127.0.0.1:5673", Target: "127.0.0.1:5672", RabbitMQ: &RabbitMQOptions{ListenerUsername: "listener", ListenerPassword: "listener-secret", ListenerVHost: "/local", UpstreamUsername: "upstream", UpstreamPassword: "upstream-secret", UpstreamVHost: "/messages"}}
+	if err := Validate(valid); err != nil {
+		t.Fatalf("valid RabbitMQ configuration rejected: %v", err)
+	}
+	valid.RabbitMQ.UpstreamVHost = ""
+	if err := Validate(valid); err == nil {
+		t.Fatal("missing RabbitMQ upstream virtual host was accepted")
+	}
 }
 
 func TestLegacyRedisCredentialsMigrateToBothTerminatedLegs(t *testing.T) {

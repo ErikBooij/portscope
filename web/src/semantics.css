@@ -34,3 +34,9 @@
   color: #7be5a3;
   background: rgba(98, 212, 141, .08);
 }
+
+.protocol.rabbitmq {
+  border: 1px solid #ff9f43;
+  color: #ffb265;
+  background: rgba(255, 159, 67, .08);
+}

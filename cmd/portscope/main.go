@@ -19,6 +19,7 @@ import (
 	"github.com/erikbooij/portscope/internal/proxy/mongoadapter"
 	"github.com/erikbooij/portscope/internal/proxy/mysqladapter"
 	"github.com/erikbooij/portscope/internal/proxy/postgresadapter"
+	"github.com/erikbooij/portscope/internal/proxy/rabbitadapter"
 	"github.com/erikbooij/portscope/internal/proxy/redisadapter"
 	appserver "github.com/erikbooij/portscope/internal/server"
 )
@@ -48,6 +49,7 @@ func main() {
 		"mysql":         func() proxy.Adapter { return mysqladapter.New() },
 		"postgres":      func() proxy.Adapter { return postgresadapter.New() },
 		"mongodb":       func() proxy.Adapter { return mongoadapter.New() },
+		"rabbitmq":      func() proxy.Adapter { return rabbitadapter.New() },
 	})
 	manager.Apply(ctx, configuration.List())
 	defer manager.Close()

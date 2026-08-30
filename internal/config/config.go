@@ -27,6 +27,7 @@ type Upstream struct {
 	MySQL       *MySQLOptions       `json:"mysql,omitempty"`
 	Postgres    *PostgresOptions    `json:"postgres,omitempty"`
 	MongoDB     *MongoDBOptions     `json:"mongodb,omitempty"`
+	RabbitMQ    *RabbitMQOptions    `json:"rabbitmq,omitempty"`
 }
 
 type ListenerTLSOptions struct {
@@ -148,6 +149,20 @@ type MongoDBOptions struct {
 	UpstreamTLS         ClientTLSOptions `json:"upstreamTls,omitempty"`
 }
 
+// RabbitMQOptions owns two independent AMQP 0-9-1 identities and virtual
+// hosts. Listener PLAIN credentials are never forwarded to the broker.
+type RabbitMQOptions struct {
+	ListenerUsername    string           `json:"listenerUsername,omitempty"`
+	ListenerPassword    string           `json:"listenerPassword,omitempty"`
+	ListenerPasswordSet bool             `json:"listenerPasswordSet,omitempty"`
+	ListenerVHost       string           `json:"listenerVhost,omitempty"`
+	UpstreamUsername    string           `json:"upstreamUsername,omitempty"`
+	UpstreamPassword    string           `json:"upstreamPassword,omitempty"`
+	UpstreamPasswordSet bool             `json:"upstreamPasswordSet,omitempty"`
+	UpstreamVHost       string           `json:"upstreamVhost,omitempty"`
+	UpstreamTLS         ClientTLSOptions `json:"upstreamTls,omitempty"`
+}
+
 type Store struct {
 	mu    sync.RWMutex
 	path  string
@@ -239,8 +254,8 @@ func Validate(item Upstream) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return errors.New("name is required")
 	}
-	if item.Protocol != "http" && item.Protocol != "elasticsearch" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" && item.Protocol != "mongodb" {
-		return errors.New("protocol must be http, elasticsearch, redis, mysql, postgres, or mongodb")
+	if item.Protocol != "http" && item.Protocol != "elasticsearch" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" && item.Protocol != "mongodb" && item.Protocol != "rabbitmq" {
+		return errors.New("protocol must be http, elasticsearch, redis, mysql, postgres, mongodb, or rabbitmq")
 	}
 	host, port, err := net.SplitHostPort(item.ListenAddr)
 	if err != nil || port == "" {
@@ -264,7 +279,10 @@ func Validate(item Upstream) error {
 	if item.Protocol == "postgres" {
 		return validatePostgres(item)
 	}
-	return validateMongoDB(item)
+	if item.Protocol == "mongodb" {
+		return validateMongoDB(item)
+	}
+	return validateRabbitMQ(item)
 }
 
 func validateHTTP(item Upstream) error {
@@ -280,7 +298,7 @@ func validateHTTP(item Upstream) error {
 			return errors.New("HTTP target credentials are not allowed; inject an Authorization header instead")
 		}
 	}
-	if item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil {
+	if item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil {
 		return errors.New("database protocol settings are not valid for HTTP upstreams")
 	}
 	if item.HTTP == nil {
@@ -309,7 +327,7 @@ func validateRedis(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("Redis target must be host:port")
 	}
-	if item.HTTP != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil {
+	if item.HTTP != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil {
 		return errors.New("other protocol settings are not valid for Redis upstreams")
 	}
 	if item.Redis == nil {
@@ -331,7 +349,7 @@ func validateMySQL(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("MySQL target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.Postgres != nil || item.MongoDB != nil {
+	if item.HTTP != nil || item.Redis != nil || item.Postgres != nil || item.MongoDB != nil || item.RabbitMQ != nil {
 		return errors.New("other protocol settings are not valid for MySQL upstreams")
 	}
 	if item.MySQL == nil {
@@ -353,7 +371,7 @@ func validatePostgres(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("PostgreSQL target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.MongoDB != nil {
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.MongoDB != nil || item.RabbitMQ != nil {
 		return errors.New("other protocol settings are not valid for PostgreSQL upstreams")
 	}
 	if item.Postgres == nil {
@@ -378,7 +396,7 @@ func validateMongoDB(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("MongoDB target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.Postgres != nil {
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.RabbitMQ != nil {
 		return errors.New("other protocol settings are not valid for MongoDB upstreams")
 	}
 	if item.MongoDB == nil {
@@ -400,6 +418,28 @@ func validateMongoDB(item Upstream) error {
 		return errors.New("MongoDB auth mechanism must be SCRAM-SHA-256 or SCRAM-SHA-1")
 	}
 	return validateClientTLS(item.MongoDB.UpstreamTLS, "MongoDB upstream TLS")
+}
+
+func validateRabbitMQ(item Upstream) error {
+	if _, _, err := net.SplitHostPort(item.Target); err != nil {
+		return errors.New("RabbitMQ target must be host:port")
+	}
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil {
+		return errors.New("other protocol settings are not valid for RabbitMQ upstreams")
+	}
+	if item.RabbitMQ == nil {
+		return errors.New("RabbitMQ settings are required")
+	}
+	if strings.TrimSpace(item.RabbitMQ.ListenerUsername) == "" || item.RabbitMQ.ListenerPassword == "" {
+		return errors.New("RabbitMQ listener username and password are required")
+	}
+	if strings.TrimSpace(item.RabbitMQ.UpstreamUsername) == "" || item.RabbitMQ.UpstreamPassword == "" {
+		return errors.New("RabbitMQ upstream username and password are required")
+	}
+	if item.RabbitMQ.ListenerVHost == "" || item.RabbitMQ.UpstreamVHost == "" {
+		return errors.New("RabbitMQ listener and upstream virtual hosts are required")
+	}
+	return validateClientTLS(item.RabbitMQ.UpstreamTLS, "RabbitMQ upstream TLS")
 }
 
 func validateListenerTLS(options *ListenerTLSOptions) error {
@@ -493,6 +533,12 @@ func PublicUpstreams(items []Upstream) []Upstream {
 			result[i].MongoDB.UpstreamPasswordSet = result[i].MongoDB.UpstreamPassword != ""
 			result[i].MongoDB.UpstreamPassword = ""
 		}
+		if result[i].RabbitMQ != nil {
+			result[i].RabbitMQ.ListenerPasswordSet = result[i].RabbitMQ.ListenerPassword != ""
+			result[i].RabbitMQ.ListenerPassword = ""
+			result[i].RabbitMQ.UpstreamPasswordSet = result[i].RabbitMQ.UpstreamPassword != ""
+			result[i].RabbitMQ.UpstreamPassword = ""
+		}
 		if result[i].HTTP != nil {
 			redactRules(result[i].HTTP.RequestHeaders)
 			redactRules(result[i].HTTP.ResponseHeaders)
@@ -535,6 +581,14 @@ func MergeSecrets(incoming, existing Upstream) Upstream {
 		}
 		if incoming.MongoDB.UpstreamPassword == "" && incoming.MongoDB.UpstreamPasswordSet {
 			incoming.MongoDB.UpstreamPassword = existing.MongoDB.UpstreamPassword
+		}
+	}
+	if incoming.RabbitMQ != nil && existing.RabbitMQ != nil {
+		if incoming.RabbitMQ.ListenerPassword == "" && incoming.RabbitMQ.ListenerPasswordSet {
+			incoming.RabbitMQ.ListenerPassword = existing.RabbitMQ.ListenerPassword
+		}
+		if incoming.RabbitMQ.UpstreamPassword == "" && incoming.RabbitMQ.UpstreamPasswordSet {
+			incoming.RabbitMQ.UpstreamPassword = existing.RabbitMQ.UpstreamPassword
 		}
 	}
 	if incoming.HTTP != nil && existing.HTTP != nil {
