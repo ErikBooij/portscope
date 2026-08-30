@@ -1,11 +1,12 @@
 export type Pair = { name: string; value: string };
 export type Payload = { kind: string; summary?: string; text?: string; json?: unknown; size: number; truncated?: boolean; headers?: Pair[] };
-export type Interaction = { id: string; upstreamId: string; protocol: "http"|"redis"|"websocket"|"mysql"; connection?: string; operation: string; startedAt: string; durationUs: number; outcome: "ok"|"error"; error?: string; request: Payload; response: Payload; attributes?: Record<string,string> };
+export type Interaction = { id: string; upstreamId: string; protocol: "http"|"redis"|"websocket"|"mysql"|"postgres"; connection?: string; operation: string; startedAt: string; durationUs: number; outcome: "ok"|"error"; error?: string; request: Payload; response: Payload; attributes?: Record<string,string> };
 export type ClientTLSOptions = { enabled: boolean; serverName?: string; caFile?: string; certFile?: string; keyFile?: string; insecureSkipVerify?: boolean };
 export type ListenerTLSOptions = { enabled: boolean; certFile?: string; keyFile?: string; clientCaFile?: string; requireClientCert?: boolean };
 export type HeaderRule = { action: "set"|"add"|"remove"; name: string; value?: string; sensitive?: boolean; valueSet?: boolean };
 export type HTTPOptions = { preserveHost?: boolean; requestHeaders?: HeaderRule[]; responseHeaders?: HeaderRule[]; upstreamTls?: ClientTLSOptions };
 export type RedisOptions = { listenerUsername?: string; listenerPassword?: string; listenerPasswordSet?: boolean; upstreamUsername?: string; upstreamPassword?: string; upstreamPasswordSet?: boolean; database?: number; upstreamTls?: ClientTLSOptions };
 export type MySQLOptions = { listenerUsername: string; listenerPassword?: string; listenerPasswordSet?: boolean; upstreamUsername: string; upstreamPassword?: string; upstreamPasswordSet?: boolean; database?: string; upstreamTls?: ClientTLSOptions };
-export type Upstream = { id: string; name: string; protocol: "http"|"redis"|"mysql"; listenAddr: string; target: string; enabled: boolean; listenerTls?: ListenerTLSOptions; http?: HTTPOptions; redis?: RedisOptions; mysql?: MySQLOptions };
+export type PostgresOptions = { listenerUsername: string; listenerPassword?: string; listenerPasswordSet?: boolean; upstreamUsername: string; upstreamPassword?: string; upstreamPasswordSet?: boolean; database: string; upstreamTls?: ClientTLSOptions };
+export type Upstream = { id: string; name: string; protocol: "http"|"redis"|"mysql"|"postgres"; listenAddr: string; target: string; enabled: boolean; listenerTls?: ListenerTLSOptions; http?: HTTPOptions; redis?: RedisOptions; mysql?: MySQLOptions; postgres?: PostgresOptions };
 export type RuntimeStatus = { upstreamId: string; state: "starting"|"running"|"disabled"|"error"; detail?: string; since: string };

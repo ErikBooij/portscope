@@ -16,3 +16,9 @@
   color: #78adff;
   background: rgba(95, 157, 255, .08);
 }
+
+.protocol.postgres {
+  border: 1px solid #d9a8ff;
+  color: #dfb9ff;
+  background: rgba(217, 168, 255, .08);
+}

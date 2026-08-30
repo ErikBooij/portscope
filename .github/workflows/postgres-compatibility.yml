@@ -1,0 +1,44 @@
+name: PostgreSQL compatibility
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-v3:
+    name: PostgreSQL ${{ matrix.postgres }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["14", "15", "16", "17", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: portscope-matrix-secret
+          POSTGRES_DB: portscope_compat
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -h127.0.0.1 -U postgres -d portscope_compat"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Exercise Portscope against PostgreSQL ${{ matrix.postgres }}
+        env:
+          POSTGRES_MATRIX_ADDR: 127.0.0.1:5432
+          POSTGRES_MATRIX_PASSWORD: portscope-matrix-secret
+          POSTGRES_MATRIX_DATABASE: portscope_compat
+          POSTGRES_MATRIX_VERSION: ${{ matrix.postgres }}
+        run: go test -tags=postgresmatrix ./internal/proxy/postgresadapter -run '^TestRealPostgresCompatibility$' -count=1

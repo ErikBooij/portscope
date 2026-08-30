@@ -113,7 +113,7 @@
 
 .protocol-choice {
   margin-top: 9px;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
 }
 
 .protocol-choice button {

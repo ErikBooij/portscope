@@ -25,6 +25,7 @@ type Upstream struct {
 	HTTP        *HTTPOptions        `json:"http,omitempty"`
 	Redis       *RedisOptions       `json:"redis,omitempty"`
 	MySQL       *MySQLOptions       `json:"mysql,omitempty"`
+	Postgres    *PostgresOptions    `json:"postgres,omitempty"`
 }
 
 type ListenerTLSOptions struct {
@@ -108,6 +109,19 @@ func (options *RedisOptions) UnmarshalJSON(data []byte) error {
 // MySQLOptions deliberately separates the credentials accepted by Portscope
 // from those used for its independently authenticated upstream session.
 type MySQLOptions struct {
+	ListenerUsername    string           `json:"listenerUsername,omitempty"`
+	ListenerPassword    string           `json:"listenerPassword,omitempty"`
+	ListenerPasswordSet bool             `json:"listenerPasswordSet,omitempty"`
+	UpstreamUsername    string           `json:"upstreamUsername,omitempty"`
+	UpstreamPassword    string           `json:"upstreamPassword,omitempty"`
+	UpstreamPasswordSet bool             `json:"upstreamPasswordSet,omitempty"`
+	Database            string           `json:"database,omitempty"`
+	UpstreamTLS         ClientTLSOptions `json:"upstreamTls,omitempty"`
+}
+
+// PostgresOptions keeps the application-facing identity distinct from the
+// independently authenticated upstream session owned by Portscope.
+type PostgresOptions struct {
 	ListenerUsername    string           `json:"listenerUsername,omitempty"`
 	ListenerPassword    string           `json:"listenerPassword,omitempty"`
 	ListenerPasswordSet bool             `json:"listenerPasswordSet,omitempty"`
@@ -209,8 +223,8 @@ func Validate(item Upstream) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return errors.New("name is required")
 	}
-	if item.Protocol != "http" && item.Protocol != "redis" && item.Protocol != "mysql" {
-		return errors.New("protocol must be http, redis, or mysql")
+	if item.Protocol != "http" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" {
+		return errors.New("protocol must be http, redis, mysql, or postgres")
 	}
 	host, port, err := net.SplitHostPort(item.ListenAddr)
 	if err != nil || port == "" {
@@ -228,7 +242,10 @@ func Validate(item Upstream) error {
 	if item.Protocol == "redis" {
 		return validateRedis(item)
 	}
-	return validateMySQL(item)
+	if item.Protocol == "mysql" {
+		return validateMySQL(item)
+	}
+	return validatePostgres(item)
 }
 
 func validateHTTP(item Upstream) error {
@@ -241,8 +258,8 @@ func validateHTTP(item Upstream) error {
 			return errors.New("HTTP target credentials are not allowed; inject an Authorization header instead")
 		}
 	}
-	if item.Redis != nil || item.MySQL != nil {
-		return errors.New("Redis and MySQL settings are not valid for HTTP upstreams")
+	if item.Redis != nil || item.MySQL != nil || item.Postgres != nil {
+		return errors.New("Redis, MySQL, and PostgreSQL settings are not valid for HTTP upstreams")
 	}
 	if item.HTTP == nil {
 		return nil
@@ -270,8 +287,8 @@ func validateRedis(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("Redis target must be host:port")
 	}
-	if item.HTTP != nil || item.MySQL != nil {
-		return errors.New("HTTP and MySQL settings are not valid for Redis upstreams")
+	if item.HTTP != nil || item.MySQL != nil || item.Postgres != nil {
+		return errors.New("HTTP, MySQL, and PostgreSQL settings are not valid for Redis upstreams")
 	}
 	if item.Redis == nil {
 		return nil
@@ -292,8 +309,8 @@ func validateMySQL(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("MySQL target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil {
-		return errors.New("HTTP and Redis settings are not valid for MySQL upstreams")
+	if item.HTTP != nil || item.Redis != nil || item.Postgres != nil {
+		return errors.New("HTTP, Redis, and PostgreSQL settings are not valid for MySQL upstreams")
 	}
 	if item.MySQL == nil {
 		return errors.New("MySQL settings are required")
@@ -308,6 +325,31 @@ func validateMySQL(item Upstream) error {
 		return errors.New("MySQL upstream username is required")
 	}
 	return validateClientTLS(item.MySQL.UpstreamTLS, "MySQL upstream TLS")
+}
+
+func validatePostgres(item Upstream) error {
+	if _, _, err := net.SplitHostPort(item.Target); err != nil {
+		return errors.New("PostgreSQL target must be host:port")
+	}
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil {
+		return errors.New("HTTP, Redis, and MySQL settings are not valid for PostgreSQL upstreams")
+	}
+	if item.Postgres == nil {
+		return errors.New("PostgreSQL settings are required")
+	}
+	if strings.TrimSpace(item.Postgres.ListenerUsername) == "" {
+		return errors.New("PostgreSQL listener username is required")
+	}
+	if item.Postgres.ListenerPassword == "" {
+		return errors.New("PostgreSQL listener password is required")
+	}
+	if strings.TrimSpace(item.Postgres.UpstreamUsername) == "" {
+		return errors.New("PostgreSQL upstream username is required")
+	}
+	if strings.TrimSpace(item.Postgres.Database) == "" {
+		return errors.New("PostgreSQL upstream database is required")
+	}
+	return validateClientTLS(item.Postgres.UpstreamTLS, "PostgreSQL upstream TLS")
 }
 
 func validateListenerTLS(options *ListenerTLSOptions) error {
@@ -389,6 +431,12 @@ func PublicUpstreams(items []Upstream) []Upstream {
 			result[i].MySQL.UpstreamPasswordSet = result[i].MySQL.UpstreamPassword != ""
 			result[i].MySQL.UpstreamPassword = ""
 		}
+		if result[i].Postgres != nil {
+			result[i].Postgres.ListenerPasswordSet = result[i].Postgres.ListenerPassword != ""
+			result[i].Postgres.ListenerPassword = ""
+			result[i].Postgres.UpstreamPasswordSet = result[i].Postgres.UpstreamPassword != ""
+			result[i].Postgres.UpstreamPassword = ""
+		}
 		if result[i].HTTP != nil {
 			redactRules(result[i].HTTP.RequestHeaders)
 			redactRules(result[i].HTTP.ResponseHeaders)
@@ -415,6 +463,14 @@ func MergeSecrets(incoming, existing Upstream) Upstream {
 		}
 		if incoming.MySQL.UpstreamPassword == "" && incoming.MySQL.UpstreamPasswordSet {
 			incoming.MySQL.UpstreamPassword = existing.MySQL.UpstreamPassword
+		}
+	}
+	if incoming.Postgres != nil && existing.Postgres != nil {
+		if incoming.Postgres.ListenerPassword == "" && incoming.Postgres.ListenerPasswordSet {
+			incoming.Postgres.ListenerPassword = existing.Postgres.ListenerPassword
+		}
+		if incoming.Postgres.UpstreamPassword == "" && incoming.Postgres.UpstreamPasswordSet {
+			incoming.Postgres.UpstreamPassword = existing.Postgres.UpstreamPassword
 		}
 	}
 	if incoming.HTTP != nil && existing.HTTP != nil {

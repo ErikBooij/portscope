@@ -13,7 +13,7 @@ func TestValidateKeepsProtocolSpecificTargetsDistinct(t *testing.T) {
 		name  string
 		item  Upstream
 		valid bool
-	}{{"http", Upstream{Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "http://localhost:3000"}, true}, {"redis", Upstream{Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "localhost:6379"}, true}, {"mysql", Upstream{Name: "database", Protocol: "mysql", ListenAddr: "127.0.0.1:3307", Target: "localhost:3306", MySQL: &MySQLOptions{ListenerUsername: "app", ListenerPassword: "proxy-secret", UpstreamUsername: "db"}}, true}, {"mysql without credentials", Upstream{Name: "database", Protocol: "mysql", ListenAddr: "127.0.0.1:3307", Target: "localhost:3306", MySQL: &MySQLOptions{}}, false}, {"http target on redis", Upstream{Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "http://localhost:6379"}, false}, {"bare target on http", Upstream{Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "localhost:3000"}, false}}
+	}{{"http", Upstream{Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "http://localhost:3000"}, true}, {"redis", Upstream{Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "localhost:6379"}, true}, {"mysql", Upstream{Name: "database", Protocol: "mysql", ListenAddr: "127.0.0.1:3307", Target: "localhost:3306", MySQL: &MySQLOptions{ListenerUsername: "app", ListenerPassword: "proxy-secret", UpstreamUsername: "db"}}, true}, {"mysql without credentials", Upstream{Name: "database", Protocol: "mysql", ListenAddr: "127.0.0.1:3307", Target: "localhost:3306", MySQL: &MySQLOptions{}}, false}, {"postgres", Upstream{Name: "database", Protocol: "postgres", ListenAddr: "127.0.0.1:5433", Target: "localhost:5432", Postgres: &PostgresOptions{ListenerUsername: "app", ListenerPassword: "proxy-secret", UpstreamUsername: "db", Database: "app"}}, true}, {"postgres without credentials", Upstream{Name: "database", Protocol: "postgres", ListenAddr: "127.0.0.1:5433", Target: "localhost:5432", Postgres: &PostgresOptions{}}, false}, {"http target on redis", Upstream{Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "http://localhost:6379"}, false}, {"bare target on http", Upstream{Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "localhost:3000"}, false}}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			err := Validate(test.item)
@@ -70,6 +70,16 @@ func TestSecretsAreWriteOnlyAndPreservedOnEdit(t *testing.T) {
 	mysqlMerged := MergeSecrets(mysqlPublic, mysqlOriginal)
 	if mysqlMerged.MySQL.ListenerPassword != "listener-secret" || mysqlMerged.MySQL.UpstreamPassword != "database-secret" {
 		t.Fatal("blank write-only MySQL passwords did not preserve existing secrets")
+	}
+
+	postgresOriginal := Upstream{ID: "postgres", Name: "postgres", Protocol: "postgres", ListenAddr: "127.0.0.1:5433", Target: "localhost:5432", Postgres: &PostgresOptions{ListenerUsername: "proxy", ListenerPassword: "listener-secret", UpstreamUsername: "app", UpstreamPassword: "database-secret", Database: "app"}}
+	postgresPublic := PublicUpstream(postgresOriginal)
+	if postgresPublic.Postgres.ListenerPassword != "" || !postgresPublic.Postgres.ListenerPasswordSet || postgresPublic.Postgres.UpstreamPassword != "" || !postgresPublic.Postgres.UpstreamPasswordSet {
+		t.Fatalf("public PostgreSQL credentials leaked or lost state: %#v", postgresPublic.Postgres)
+	}
+	postgresMerged := MergeSecrets(postgresPublic, postgresOriginal)
+	if postgresMerged.Postgres.ListenerPassword != "listener-secret" || postgresMerged.Postgres.UpstreamPassword != "database-secret" {
+		t.Fatal("blank write-only PostgreSQL passwords did not preserve existing secrets")
 	}
 }
 
