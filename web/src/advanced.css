@@ -113,6 +113,7 @@
 
 .protocol-choice {
   margin-top: 9px;
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .protocol-choice button {
@@ -376,6 +377,10 @@
     display: grid;
     grid-template-columns: 1fr;
     gap: 16px;
+  }
+
+  .advanced-editor .protocol-choice {
+    grid-template-columns: 1fr;
   }
 
   .header-rule {

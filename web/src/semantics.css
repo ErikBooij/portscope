@@ -10,3 +10,9 @@
   color: #c5a8ff;
   background: rgba(185, 149, 255, .08);
 }
+
+.protocol.mysql {
+  border: 1px solid #5f9dff;
+  color: #78adff;
+  background: rgba(95, 157, 255, .08);
+}

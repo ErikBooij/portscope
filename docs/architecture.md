@@ -16,15 +16,15 @@ An adapter owns everything callers should not need to understand: listening, ups
 
 The shared `Interaction` is an observation envelope, not a universal query abstraction. It standardizes identity, time, duration, outcome, request/response payloads, and searchable attributes. `Operation`, payload kind, and attributes retain protocol vocabulary. The UI can therefore offer shared filtering and timing while adding a protocol-specific renderer without teaching the manager or store about that protocol.
 
-This passes the two-adapter test today: HTTP and Redis differ substantially behind the same small interface.
+This passes the multi-adapter test today: HTTP, Redis, and MySQL differ substantially behind the same small interface.
 
-## Why Postgres and MySQL remain substantial
+## Why database protocols remain substantial
 
 A future PostgreSQL adapter must model startup and optional TLS negotiation, authentication, simple queries, the extended Parse/Bind/Describe/Execute/Sync flow, prepared-statement and portal identity, COPY modes, asynchronous notices, cancellation, and connection/session state. Timing a single frontend message is not necessarily timing a query.
 
-A MySQL adapter separately needs handshake and capability negotiation, authentication plugins, optional TLS and compression, text queries, binary prepared-statement execution, multi-result responses, server status flags, and session state. Its packet sequence and correlation rules do not map onto PostgreSQL or Redis.
+The MySQL adapter therefore remains a deep module behind the existing seam. It generates and authenticates its own downstream server handshake, independently negotiates and authenticates an upstream client session, aligns the two capability sets, owns classic-packet sequencing, and emits observations only after its response state machine has completed a command. Text results and prepared statements share connection-scoped state without leaking that state into the runtime manager.
 
-Those adapters should produce the same `Interaction` envelope only after their own state machines have identified a meaningful operation. Adding either one will likely introduce internal seams for TLS termination/passthrough policy and credential handling, but it should not enlarge the runtime manager’s interface.
+Database adapters should produce the same `Interaction` envelope only after their own state machines have identified a meaningful operation. MySQL confirms that adding one does not require enlarging the runtime manager’s interface; PostgreSQL should follow the same rule.
 
 ## Storage and live delivery
 
@@ -32,7 +32,7 @@ Configuration is an atomically replaced, owner-readable JSON document. Interacti
 
 ## Trust and safety
 
-Authorization, proxy-authorization, cookie, and set-cookie HTTP headers are redacted before persistence. Configured sensitive header rules extend that set. Redis `AUTH` and `HELLO ... AUTH` payloads are redacted. Persisted secrets are write-only at the API boundary: a public configuration carries only a `valueSet`/`passwordSet` marker, and edit requests merge unchanged secrets inside the store boundary.
+Authorization, proxy-authorization, cookie, and set-cookie HTTP headers are redacted before persistence. Configured sensitive header rules extend that set. Redis `AUTH` and `HELLO ... AUTH` payloads are redacted. MySQL authentication packets are never captured as payloads, and listener/upstream passwords are separate write-only settings. Persisted secrets are write-only at the API boundary: a public configuration carries only a `valueSet`/`passwordSet` marker, and edit requests merge unchanged secrets inside the store boundary.
 
 TLS construction is another shared deep module used by both protocol adapters. It owns the TLS 1.2 floor, system/custom trust roots, SNI overrides, client certificates, listener certificates, client-CA verification, and ALPN. HTTP-specific protocol selection, WebSocket upgrade/frame handling, and Redis-specific AUTH/SELECT handshakes remain inside their adapters.
 

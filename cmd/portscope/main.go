@@ -16,6 +16,7 @@ import (
 	"github.com/erikbooij/portscope/internal/observation"
 	"github.com/erikbooij/portscope/internal/proxy"
 	"github.com/erikbooij/portscope/internal/proxy/httpadapter"
+	"github.com/erikbooij/portscope/internal/proxy/mysqladapter"
 	"github.com/erikbooij/portscope/internal/proxy/redisadapter"
 	appserver "github.com/erikbooij/portscope/internal/server"
 )
@@ -38,7 +39,11 @@ func main() {
 		logger.Error("open observations", "error", err)
 		os.Exit(1)
 	}
-	manager := proxy.NewManager(observations, map[string]proxy.Factory{"http": func() proxy.Adapter { return httpadapter.New() }, "redis": func() proxy.Adapter { return redisadapter.New() }})
+	manager := proxy.NewManager(observations, map[string]proxy.Factory{
+		"http":  func() proxy.Adapter { return httpadapter.New() },
+		"redis": func() proxy.Adapter { return redisadapter.New() },
+		"mysql": func() proxy.Adapter { return mysqladapter.New() },
+	})
 	manager.Apply(ctx, configuration.List())
 	defer manager.Close()
 	server := &http.Server{Addr: address, Handler: appserver.New(ctx, configuration, observations, manager, logger).Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}

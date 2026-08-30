@@ -24,6 +24,7 @@ type Upstream struct {
 	ListenerTLS *ListenerTLSOptions `json:"listenerTls,omitempty"`
 	HTTP        *HTTPOptions        `json:"http,omitempty"`
 	Redis       *RedisOptions       `json:"redis,omitempty"`
+	MySQL       *MySQLOptions       `json:"mysql,omitempty"`
 }
 
 type ListenerTLSOptions struct {
@@ -64,6 +65,19 @@ type RedisOptions struct {
 	PasswordSet bool             `json:"passwordSet,omitempty"`
 	Database    int              `json:"database,omitempty"`
 	TLS         ClientTLSOptions `json:"tls,omitempty"`
+}
+
+// MySQLOptions deliberately separates the credentials accepted by Portscope
+// from those used for its independently authenticated upstream session.
+type MySQLOptions struct {
+	ListenerUsername    string           `json:"listenerUsername,omitempty"`
+	ListenerPassword    string           `json:"listenerPassword,omitempty"`
+	ListenerPasswordSet bool             `json:"listenerPasswordSet,omitempty"`
+	UpstreamUsername    string           `json:"upstreamUsername,omitempty"`
+	UpstreamPassword    string           `json:"upstreamPassword,omitempty"`
+	UpstreamPasswordSet bool             `json:"upstreamPasswordSet,omitempty"`
+	Database            string           `json:"database,omitempty"`
+	UpstreamTLS         ClientTLSOptions `json:"upstreamTls,omitempty"`
 }
 
 type Store struct {
@@ -157,8 +171,8 @@ func Validate(item Upstream) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return errors.New("name is required")
 	}
-	if item.Protocol != "http" && item.Protocol != "redis" {
-		return errors.New("protocol must be http or redis")
+	if item.Protocol != "http" && item.Protocol != "redis" && item.Protocol != "mysql" {
+		return errors.New("protocol must be http, redis, or mysql")
 	}
 	host, port, err := net.SplitHostPort(item.ListenAddr)
 	if err != nil || port == "" {
@@ -173,7 +187,10 @@ func Validate(item Upstream) error {
 	if item.Protocol == "http" {
 		return validateHTTP(item)
 	}
-	return validateRedis(item)
+	if item.Protocol == "redis" {
+		return validateRedis(item)
+	}
+	return validateMySQL(item)
 }
 
 func validateHTTP(item Upstream) error {
@@ -186,8 +203,8 @@ func validateHTTP(item Upstream) error {
 			return errors.New("HTTP target credentials are not allowed; inject an Authorization header instead")
 		}
 	}
-	if item.Redis != nil {
-		return errors.New("Redis settings are only valid for Redis upstreams")
+	if item.Redis != nil || item.MySQL != nil {
+		return errors.New("Redis and MySQL settings are not valid for HTTP upstreams")
 	}
 	if item.HTTP == nil {
 		return nil
@@ -215,8 +232,8 @@ func validateRedis(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("Redis target must be host:port")
 	}
-	if item.HTTP != nil {
-		return errors.New("HTTP settings are only valid for HTTP upstreams")
+	if item.HTTP != nil || item.MySQL != nil {
+		return errors.New("HTTP and MySQL settings are not valid for Redis upstreams")
 	}
 	if item.ListenerTLS != nil && item.ListenerTLS.Enabled {
 		return errors.New("TLS listeners are currently supported for HTTP upstreams only")
@@ -231,6 +248,28 @@ func validateRedis(item Upstream) error {
 		return errors.New("Redis username requires a password")
 	}
 	return validateClientTLS(item.Redis.TLS, "Redis TLS")
+}
+
+func validateMySQL(item Upstream) error {
+	if _, _, err := net.SplitHostPort(item.Target); err != nil {
+		return errors.New("MySQL target must be host:port")
+	}
+	if item.HTTP != nil || item.Redis != nil {
+		return errors.New("HTTP and Redis settings are not valid for MySQL upstreams")
+	}
+	if item.MySQL == nil {
+		return errors.New("MySQL settings are required")
+	}
+	if strings.TrimSpace(item.MySQL.ListenerUsername) == "" {
+		return errors.New("MySQL listener username is required")
+	}
+	if item.MySQL.ListenerPassword == "" {
+		return errors.New("MySQL listener password is required")
+	}
+	if strings.TrimSpace(item.MySQL.UpstreamUsername) == "" {
+		return errors.New("MySQL upstream username is required")
+	}
+	return validateClientTLS(item.MySQL.UpstreamTLS, "MySQL upstream TLS")
 }
 
 func validateListenerTLS(options *ListenerTLSOptions) error {
@@ -304,6 +343,12 @@ func PublicUpstreams(items []Upstream) []Upstream {
 			result[i].Redis.PasswordSet = result[i].Redis.Password != ""
 			result[i].Redis.Password = ""
 		}
+		if result[i].MySQL != nil {
+			result[i].MySQL.ListenerPasswordSet = result[i].MySQL.ListenerPassword != ""
+			result[i].MySQL.ListenerPassword = ""
+			result[i].MySQL.UpstreamPasswordSet = result[i].MySQL.UpstreamPassword != ""
+			result[i].MySQL.UpstreamPassword = ""
+		}
 		if result[i].HTTP != nil {
 			redactRules(result[i].HTTP.RequestHeaders)
 			redactRules(result[i].HTTP.ResponseHeaders)
@@ -318,6 +363,14 @@ func PublicUpstream(item Upstream) Upstream { return PublicUpstreams([]Upstream{
 func MergeSecrets(incoming, existing Upstream) Upstream {
 	if incoming.Redis != nil && existing.Redis != nil && incoming.Redis.Password == "" && incoming.Redis.PasswordSet {
 		incoming.Redis.Password = existing.Redis.Password
+	}
+	if incoming.MySQL != nil && existing.MySQL != nil {
+		if incoming.MySQL.ListenerPassword == "" && incoming.MySQL.ListenerPasswordSet {
+			incoming.MySQL.ListenerPassword = existing.MySQL.ListenerPassword
+		}
+		if incoming.MySQL.UpstreamPassword == "" && incoming.MySQL.UpstreamPasswordSet {
+			incoming.MySQL.UpstreamPassword = existing.MySQL.UpstreamPassword
+		}
 	}
 	if incoming.HTTP != nil && existing.HTTP != nil {
 		mergeRuleSecrets(incoming.HTTP.RequestHeaders, existing.HTTP.RequestHeaders)

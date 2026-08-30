@@ -12,7 +12,7 @@ func TestValidateKeepsProtocolSpecificTargetsDistinct(t *testing.T) {
 		name  string
 		item  Upstream
 		valid bool
-	}{{"http", Upstream{Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "http://localhost:3000"}, true}, {"redis", Upstream{Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "localhost:6379"}, true}, {"http target on redis", Upstream{Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "http://localhost:6379"}, false}, {"bare target on http", Upstream{Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "localhost:3000"}, false}}
+	}{{"http", Upstream{Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "http://localhost:3000"}, true}, {"redis", Upstream{Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "localhost:6379"}, true}, {"mysql", Upstream{Name: "database", Protocol: "mysql", ListenAddr: "127.0.0.1:3307", Target: "localhost:3306", MySQL: &MySQLOptions{ListenerUsername: "app", ListenerPassword: "proxy-secret", UpstreamUsername: "db"}}, true}, {"mysql without credentials", Upstream{Name: "database", Protocol: "mysql", ListenAddr: "127.0.0.1:3307", Target: "localhost:3306", MySQL: &MySQLOptions{}}, false}, {"http target on redis", Upstream{Name: "cache", Protocol: "redis", ListenAddr: "127.0.0.1:6380", Target: "http://localhost:6379"}, false}, {"bare target on http", Upstream{Name: "api", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "localhost:3000"}, false}}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			err := Validate(test.item)
@@ -59,6 +59,16 @@ func TestSecretsAreWriteOnlyAndPreservedOnEdit(t *testing.T) {
 	}
 	if got := MergeSecrets(httpPublic, httpOriginal).HTTP.RequestHeaders[0].Value; got != "Bearer secret" {
 		t.Fatalf("merged header secret = %q", got)
+	}
+
+	mysqlOriginal := Upstream{ID: "database", Name: "database", Protocol: "mysql", ListenAddr: "127.0.0.1:3307", Target: "localhost:3306", MySQL: &MySQLOptions{ListenerUsername: "proxy", ListenerPassword: "listener-secret", UpstreamUsername: "app", UpstreamPassword: "database-secret"}}
+	mysqlPublic := PublicUpstream(mysqlOriginal)
+	if mysqlPublic.MySQL.ListenerPassword != "" || !mysqlPublic.MySQL.ListenerPasswordSet || mysqlPublic.MySQL.UpstreamPassword != "" || !mysqlPublic.MySQL.UpstreamPasswordSet {
+		t.Fatalf("public MySQL credentials leaked or lost state: %#v", mysqlPublic.MySQL)
+	}
+	mysqlMerged := MergeSecrets(mysqlPublic, mysqlOriginal)
+	if mysqlMerged.MySQL.ListenerPassword != "listener-secret" || mysqlMerged.MySQL.UpstreamPassword != "database-secret" {
+		t.Fatal("blank write-only MySQL passwords did not preserve existing secrets")
 	}
 }
 
