@@ -129,7 +129,7 @@ export default function App() {
       <section className="traffic-pane">
         <div className="toolbar">
           <label className="search"><span>⌕</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Filter operation, body, error…"/></label>
-          <div className="segmented"><button className={!protocolFilter ? "active" : ""} onClick={() => setProtocolFilter("")}>ALL</button><button className={protocolFilter === "http" ? "active" : ""} onClick={() => setProtocolFilter("http")}>HTTP</button><button className={protocolFilter === "websocket" ? "active" : ""} onClick={() => setProtocolFilter("websocket")}>WS</button><button className={protocolFilter === "redis" ? "active" : ""} onClick={() => setProtocolFilter("redis")}>REDIS</button><button className={protocolFilter === "mysql" ? "active" : ""} onClick={() => setProtocolFilter("mysql")}>MYSQL</button><button className={protocolFilter === "postgres" ? "active" : ""} onClick={() => setProtocolFilter("postgres")}>PG</button></div>
+          <div className="segmented"><button className={!protocolFilter ? "active" : ""} onClick={() => setProtocolFilter("")}>ALL</button><button className={protocolFilter === "http" ? "active" : ""} onClick={() => setProtocolFilter("http")}>HTTP</button><button className={protocolFilter === "websocket" ? "active" : ""} onClick={() => setProtocolFilter("websocket")}>WS</button><button className={protocolFilter === "elasticsearch" ? "active" : ""} onClick={() => setProtocolFilter("elasticsearch")}>SEARCH</button><button className={protocolFilter === "redis" ? "active" : ""} onClick={() => setProtocolFilter("redis")}>REDIS</button><button className={protocolFilter === "mysql" ? "active" : ""} onClick={() => setProtocolFilter("mysql")}>MYSQL</button><button className={protocolFilter === "postgres" ? "active" : ""} onClick={() => setProtocolFilter("postgres")}>PG</button></div>
           <button className="clear" onClick={clearTraffic}>Clear</button>
         </div>
         <div className="table-head"><span>TIME</span><span>UPSTREAM</span><span>OPERATION</span><span>RESULT</span><span>DURATION</span><span>SIZE</span></div>
@@ -174,10 +174,12 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
     }
     onSave(draft);
   }
-  function selectProtocol(protocol: "http" | "redis" | "mysql" | "postgres") {
+  function selectProtocol(protocol: "http" | "elasticsearch" | "redis" | "mysql" | "postgres") {
     if (protocol === draft.protocol) return;
     if (protocol === "http") {
       setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9000", target: "http://127.0.0.1:3000", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
+    } else if (protocol === "elasticsearch") {
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9201", target: "http://127.0.0.1:9200", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "redis") {
       setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:6380", target: "127.0.0.1:6379", http: undefined, mysql: undefined, postgres: undefined, listenerTls: undefined, redis: { database: 0, upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "mysql") {
@@ -197,6 +199,7 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
       <div className="editor-scroll">
         <div className="protocol-field"><span className="field-caption">PROTOCOL</span><div className="protocol-choice">
           <button type="button" className={draft.protocol === "http" ? "active" : ""} onClick={() => selectProtocol("http")}><i className="protocol http">H</i><span><b>HTTP</b><small>HTTP/1.1 + HTTP/2 + WS</small></span></button>
+          <button type="button" className={draft.protocol === "elasticsearch" ? "active" : ""} onClick={() => selectProtocol("elasticsearch")}><i className="protocol elasticsearch">E</i><span><b>SEARCH</b><small>ELASTIC + OPENSEARCH</small></span></button>
           <button type="button" className={draft.protocol === "redis" ? "active" : ""} onClick={() => selectProtocol("redis")}><i className="protocol redis">R</i><span><b>REDIS</b><small>RESP2 + RESP3</small></span></button>
           <button type="button" className={draft.protocol === "mysql" ? "active" : ""} onClick={() => selectProtocol("mysql")}><i className="protocol mysql">M</i><span><b>MYSQL</b><small>CLASSIC PROTOCOL</small></span></button>
           <button type="button" className={draft.protocol === "postgres" ? "active" : ""} onClick={() => selectProtocol("postgres")}><i className="protocol postgres">P</i><span><b>POSTGRESQL</b><small>PROTOCOL V3</small></span></button>
@@ -204,10 +207,11 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
         <label>DISPLAY NAME<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="Orders API"/></label>
         <div className="field-pair">
           <label>LISTEN ADDRESS<input value={draft.listenAddr} onChange={event => setDraft({ ...draft, listenAddr: event.target.value })} placeholder="127.0.0.1:9000"/><small>Your application connects here</small></label>
-          <label>UPSTREAM TARGET<input value={draft.target} onChange={event => setDraft({ ...draft, target: event.target.value })} placeholder={draft.protocol === "http" ? "https://api.internal" : draft.protocol === "redis" ? "cache.internal:6379" : draft.protocol === "postgres" ? "postgres.internal:5432" : "mysql.internal:3306"}/><small>{draft.protocol === "http" ? "http://, https://, or h2c://" : "host:port"}</small></label>
+          <label>UPSTREAM TARGET<input value={draft.target} onChange={event => setDraft({ ...draft, target: event.target.value })} placeholder={draft.protocol === "http" ? "https://api.internal" : draft.protocol === "elasticsearch" ? "https://search.internal:9200" : draft.protocol === "redis" ? "cache.internal:6379" : draft.protocol === "postgres" ? "postgres.internal:5432" : "mysql.internal:3306"}/><small>{draft.protocol === "http" || draft.protocol === "elasticsearch" ? "http://, https://, or h2c://" : "host:port"}</small></label>
         </div>
 
         {draft.protocol === "http" && <HTTPSettings value={draft} options={httpOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
+        {draft.protocol === "elasticsearch" && <HTTPSettings value={draft} options={httpOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "redis" && <RedisSettings value={draft} options={redisOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "mysql" && <MySQLSettings value={draft} options={mysqlOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "postgres" && <PostgresSettings value={draft} options={postgresOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
@@ -376,8 +380,17 @@ async function api<T = void>(path: string, init?: RequestInit): Promise<T> {
 }
 function duration(value: number) { if (value < 1000) return `${value} µs`; if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 2 : 1)} ms`; return `${(value / 1_000_000).toFixed(2)} s`; }
 function bytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`; return `${(value / 1024 / 1024).toFixed(1)} MB`; }
-function resultLabel(item: Interaction) { return item.protocol === "http" ? (item.attributes?.status ?? (item.outcome === "ok" ? "OK" : "ERR")) : (item.outcome === "ok" ? "OK" : "ERR"); }
-function protocolGlyph(protocol: Interaction["protocol"] | Upstream["protocol"]) { return protocol === "http" ? "H" : protocol === "websocket" ? "W" : protocol === "redis" ? "R" : protocol === "postgres" ? "P" : "M"; }
+function resultLabel(item: Interaction) {
+  if (item.protocol === "http") return item.attributes?.status ?? (item.outcome === "ok" ? "OK" : "ERR");
+  if (item.protocol === "elasticsearch") {
+    if (item.attributes?.bulkFailures && item.attributes.bulkFailures !== "0") return `${item.attributes.bulkFailures} FAIL`;
+    if (item.attributes?.searchFailures && item.attributes.searchFailures !== "0") return `${item.attributes.searchFailures} FAIL`;
+    if (item.attributes?.hits) return `${item.attributes.hitRelation === "gte" ? "≥" : ""}${item.attributes.hits} HITS`;
+    if (item.attributes?.count) return `${item.attributes.count} DOCS`;
+  }
+  return item.outcome === "ok" ? "OK" : "ERR";
+}
+function protocolGlyph(protocol: Interaction["protocol"] | Upstream["protocol"]) { return protocol === "http" ? "H" : protocol === "websocket" ? "W" : protocol === "elasticsearch" ? "E" : protocol === "redis" ? "R" : protocol === "postgres" ? "P" : "M"; }
 function shortConnection(value?: string) { if (!value) return "—"; return value.length > 18 ? value.slice(0, 15) + "…" : value; }
 function matches(item: Interaction, query: string) {
   const text = [item.operation, item.request.summary, item.request.text, item.request.json ? JSON.stringify(item.request.json) : "", item.response.text, item.response.json ? JSON.stringify(item.response.json) : "", item.error, item.attributes ? JSON.stringify(item.attributes) : ""].filter(Boolean).join(" ").toLowerCase();

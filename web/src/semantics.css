@@ -22,3 +22,9 @@
   color: #dfb9ff;
   background: rgba(217, 168, 255, .08);
 }
+
+.protocol.elasticsearch {
+  border: 1px solid #f2b84b;
+  color: #ffd078;
+  background: rgba(242, 184, 75, .08);
+}

@@ -2,6 +2,7 @@ package httpadapter
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -180,7 +181,6 @@ func transportFor(upstream config.Upstream, target *url.URL) (*http.Transport, e
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: time.Second,
 		TLSClientConfig:       tlsConfig,
 		Protocols:             new(http.Protocols),
@@ -235,10 +235,11 @@ func observed(upstream config.Upstream, sink observation.Sink, next http.Handler
 		if metadata.upstreamTLS != "" {
 			attributes["upstreamTLS"] = metadata.upstreamTLS
 		}
-		sink.Record(observation.Interaction{ID: observation.NewID(), UpstreamID: upstream.ID, Protocol: "http", Connection: request.RemoteAddr, Operation: request.Method + " " + request.URL.RequestURI(), StartedAt: started, DurationUS: time.Since(started).Microseconds(), Outcome: outcome, Error: errorText,
+		item := observation.Interaction{ID: observation.NewID(), UpstreamID: upstream.ID, Protocol: "http", Connection: request.RemoteAddr, Operation: request.Method + " " + request.URL.RequestURI(), StartedAt: started, DurationUS: time.Since(started).Microseconds(), Outcome: outcome, Error: errorText,
 			Request:    payload(request.Header, requestCapture, request.Header.Get("Content-Type"), request.Method+" "+request.URL.RequestURI(), sensitive),
 			Response:   payload(responseCapture.Header(), responseCapture.body, responseCapture.Header().Get("Content-Type"), strconv.Itoa(responseCapture.status)+" "+http.StatusText(responseCapture.status), sensitive),
-			Attributes: attributes})
+			Attributes: attributes}
+		sink.Record(applySemanticProfile(upstream, item))
 	})
 }
 
@@ -291,16 +292,40 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 }
 
 func payload(headers http.Header, body *captureBuffer, contentType, summary string, sensitive map[string]struct{}) observation.Payload {
-	result := observation.Payload{Kind: "text", Summary: summary, Text: string(body.Bytes()), Size: body.total, Truncated: body.truncated, Headers: redactHeaders(headers, sensitive)}
-	if strings.Contains(contentType, "json") && json.Valid(body.Bytes()) {
+	data, decodedTruncated := decodedCapture(headers, body)
+	result := observation.Payload{Kind: "text", Summary: summary, Text: string(data), Size: body.total, Truncated: body.truncated || decodedTruncated, Headers: redactHeaders(headers, sensitive)}
+	if strings.Contains(contentType, "json") && json.Valid(data) {
 		result.Kind = "json"
-		result.JSON = append([]byte(nil), body.Bytes()...)
+		result.JSON = append([]byte(nil), data...)
 		result.Text = ""
-	} else if !looksText(body.Bytes()) {
+	} else if !looksText(data) {
 		result.Kind = "bytes"
 		result.Text = fmt.Sprintf("<%d bytes>", body.total)
 	}
 	return result
+}
+
+// decodedCapture returns a bounded inspection copy without changing the bytes
+// forwarded between the downstream client and upstream server. A truncated
+// compressed stream cannot be decoded reliably, so it remains a byte capture.
+func decodedCapture(headers http.Header, body *captureBuffer) ([]byte, bool) {
+	data := body.Bytes()
+	if body.truncated || !headerContainsToken(headers, "Content-Encoding", "gzip") {
+		return data, false
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return data, false
+	}
+	decoded, readErr := io.ReadAll(io.LimitReader(reader, captureLimit+1))
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil {
+		return data, false
+	}
+	if len(decoded) > captureLimit {
+		return decoded[:captureLimit], true
+	}
+	return decoded, false
 }
 func redactHeaders(headers http.Header, sensitive map[string]struct{}) []observation.Pair {
 	result := make([]observation.Pair, 0, len(headers))

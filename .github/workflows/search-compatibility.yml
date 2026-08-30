@@ -1,0 +1,71 @@
+name: Search compatibility
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rest-semantics:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Elasticsearch 8.19
+            product: elasticsearch
+            image: docker.elastic.co/elasticsearch/elasticsearch:8.19.20
+            version: 8.19
+          - name: Elasticsearch 9.5
+            product: elasticsearch
+            image: docker.elastic.co/elasticsearch/elasticsearch:9.5.2
+            version: 9.5
+          - name: OpenSearch 2.19
+            product: opensearch
+            image: opensearchproject/opensearch:2.19.6
+            version: 2.19
+          - name: OpenSearch 3.8
+            product: opensearch
+            image: opensearchproject/opensearch:3.8.0
+            version: 3.8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start search server
+        env:
+          SEARCH_IMAGE: ${{ matrix.image }}
+          SEARCH_PRODUCT: ${{ matrix.product }}
+        run: |
+          options=()
+          if [[ "$SEARCH_PRODUCT" == "elasticsearch" ]]; then
+            options+=("-e" "xpack.security.enabled=false")
+          else
+            options+=("-e" "DISABLE_SECURITY_PLUGIN=true")
+          fi
+          docker run -d --name portscope-search \
+            -e discovery.type=single-node \
+            -e cluster.routing.allocation.disk.threshold_enabled=false \
+            -e ES_JAVA_OPTS="-Xms512m -Xmx512m" \
+            -e OPENSEARCH_JAVA_OPTS="-Xms512m -Xmx512m" \
+            "${options[@]}" \
+            -p 127.0.0.1:9200:9200 "$SEARCH_IMAGE"
+          for _ in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:9200/ >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs portscope-search
+          exit 1
+      - name: Exercise Portscope search semantics
+        env:
+          SEARCH_MATRIX_URL: http://127.0.0.1:9200
+          SEARCH_MATRIX_VERSION: ${{ matrix.version }}
+        run: go test -tags=searchmatrix ./internal/proxy/httpadapter -run '^TestRealSearchCompatibility$' -count=1

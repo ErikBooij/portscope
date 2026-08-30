@@ -223,8 +223,8 @@ func Validate(item Upstream) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return errors.New("name is required")
 	}
-	if item.Protocol != "http" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" {
-		return errors.New("protocol must be http, redis, mysql, or postgres")
+	if item.Protocol != "http" && item.Protocol != "elasticsearch" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" {
+		return errors.New("protocol must be http, elasticsearch, redis, mysql, or postgres")
 	}
 	host, port, err := net.SplitHostPort(item.ListenAddr)
 	if err != nil || port == "" {
@@ -236,7 +236,7 @@ func Validate(item Upstream) error {
 	if err := validateListenerTLS(item.ListenerTLS); err != nil {
 		return err
 	}
-	if item.Protocol == "http" {
+	if item.Protocol == "http" || item.Protocol == "elasticsearch" {
 		return validateHTTP(item)
 	}
 	if item.Protocol == "redis" {
@@ -249,6 +249,9 @@ func Validate(item Upstream) error {
 }
 
 func validateHTTP(item Upstream) error {
+	if item.Protocol == "elasticsearch" && item.Target == "internal://echo" {
+		return errors.New("Elasticsearch target must be an http://, https://, or h2c:// URL")
+	}
 	if item.Target != "internal://echo" {
 		parsed, err := url.Parse(item.Target)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "h2c") || parsed.Host == "" {
