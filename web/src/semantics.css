@@ -1,0 +1,12 @@
+.field-caption {
+  display: block;
+  color: #818783;
+  font: 7px var(--mono);
+  letter-spacing: .1em;
+}
+
+.protocol.websocket {
+  border: 1px solid #b995ff;
+  color: #c5a8ff;
+  background: rgba(185, 149, 255, .08);
+}

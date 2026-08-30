@@ -1,0 +1,29 @@
+.inspector-close { display: none; }
+.upstream-entry { position: relative; }
+.upstream-edit {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  border: 0;
+  background: transparent;
+  color: #636965;
+  font: 8px var(--mono);
+  letter-spacing: .05em;
+}
+.upstream-edit:hover { color: var(--acid); }
+.upstream-entry .upstream { padding-right: 29px; }
+
+@media (max-width: 1050px) {
+  .inspector-close {
+    display: block;
+    position: absolute;
+    right: 13px;
+    top: 13px;
+    border: 0;
+    background: transparent;
+    color: #8b918e;
+    font-size: 20px;
+  }
+
+  .inspector-head > .protocol { right: 48px; }
+}

@@ -1,0 +1,9 @@
+services:
+  portscope:
+    build: .
+    ports:
+      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:9081:9081"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
