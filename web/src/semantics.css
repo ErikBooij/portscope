@@ -28,3 +28,9 @@
   color: #ffd078;
   background: rgba(242, 184, 75, .08);
 }
+
+.protocol.mongodb {
+  border: 1px solid #62d48d;
+  color: #7be5a3;
+  background: rgba(98, 212, 141, .08);
+}

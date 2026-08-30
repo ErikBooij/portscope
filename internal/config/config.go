@@ -26,6 +26,7 @@ type Upstream struct {
 	Redis       *RedisOptions       `json:"redis,omitempty"`
 	MySQL       *MySQLOptions       `json:"mysql,omitempty"`
 	Postgres    *PostgresOptions    `json:"postgres,omitempty"`
+	MongoDB     *MongoDBOptions     `json:"mongodb,omitempty"`
 }
 
 type ListenerTLSOptions struct {
@@ -132,6 +133,21 @@ type PostgresOptions struct {
 	UpstreamTLS         ClientTLSOptions `json:"upstreamTls,omitempty"`
 }
 
+// MongoDBOptions separates the SCRAM identity exposed by Portscope from the
+// identity used for its independently authenticated upstream wire session.
+type MongoDBOptions struct {
+	ListenerUsername    string           `json:"listenerUsername,omitempty"`
+	ListenerPassword    string           `json:"listenerPassword,omitempty"`
+	ListenerPasswordSet bool             `json:"listenerPasswordSet,omitempty"`
+	ListenerAuthSource  string           `json:"listenerAuthSource,omitempty"`
+	UpstreamUsername    string           `json:"upstreamUsername,omitempty"`
+	UpstreamPassword    string           `json:"upstreamPassword,omitempty"`
+	UpstreamPasswordSet bool             `json:"upstreamPasswordSet,omitempty"`
+	UpstreamAuthSource  string           `json:"upstreamAuthSource,omitempty"`
+	AuthMechanism       string           `json:"authMechanism,omitempty"`
+	UpstreamTLS         ClientTLSOptions `json:"upstreamTls,omitempty"`
+}
+
 type Store struct {
 	mu    sync.RWMutex
 	path  string
@@ -223,8 +239,8 @@ func Validate(item Upstream) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return errors.New("name is required")
 	}
-	if item.Protocol != "http" && item.Protocol != "elasticsearch" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" {
-		return errors.New("protocol must be http, elasticsearch, redis, mysql, or postgres")
+	if item.Protocol != "http" && item.Protocol != "elasticsearch" && item.Protocol != "redis" && item.Protocol != "mysql" && item.Protocol != "postgres" && item.Protocol != "mongodb" {
+		return errors.New("protocol must be http, elasticsearch, redis, mysql, postgres, or mongodb")
 	}
 	host, port, err := net.SplitHostPort(item.ListenAddr)
 	if err != nil || port == "" {
@@ -245,7 +261,10 @@ func Validate(item Upstream) error {
 	if item.Protocol == "mysql" {
 		return validateMySQL(item)
 	}
-	return validatePostgres(item)
+	if item.Protocol == "postgres" {
+		return validatePostgres(item)
+	}
+	return validateMongoDB(item)
 }
 
 func validateHTTP(item Upstream) error {
@@ -261,8 +280,8 @@ func validateHTTP(item Upstream) error {
 			return errors.New("HTTP target credentials are not allowed; inject an Authorization header instead")
 		}
 	}
-	if item.Redis != nil || item.MySQL != nil || item.Postgres != nil {
-		return errors.New("Redis, MySQL, and PostgreSQL settings are not valid for HTTP upstreams")
+	if item.Redis != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil {
+		return errors.New("database protocol settings are not valid for HTTP upstreams")
 	}
 	if item.HTTP == nil {
 		return nil
@@ -290,8 +309,8 @@ func validateRedis(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("Redis target must be host:port")
 	}
-	if item.HTTP != nil || item.MySQL != nil || item.Postgres != nil {
-		return errors.New("HTTP, MySQL, and PostgreSQL settings are not valid for Redis upstreams")
+	if item.HTTP != nil || item.MySQL != nil || item.Postgres != nil || item.MongoDB != nil {
+		return errors.New("other protocol settings are not valid for Redis upstreams")
 	}
 	if item.Redis == nil {
 		return nil
@@ -312,8 +331,8 @@ func validateMySQL(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("MySQL target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.Postgres != nil {
-		return errors.New("HTTP, Redis, and PostgreSQL settings are not valid for MySQL upstreams")
+	if item.HTTP != nil || item.Redis != nil || item.Postgres != nil || item.MongoDB != nil {
+		return errors.New("other protocol settings are not valid for MySQL upstreams")
 	}
 	if item.MySQL == nil {
 		return errors.New("MySQL settings are required")
@@ -334,8 +353,8 @@ func validatePostgres(item Upstream) error {
 	if _, _, err := net.SplitHostPort(item.Target); err != nil {
 		return errors.New("PostgreSQL target must be host:port")
 	}
-	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil {
-		return errors.New("HTTP, Redis, and MySQL settings are not valid for PostgreSQL upstreams")
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.MongoDB != nil {
+		return errors.New("other protocol settings are not valid for PostgreSQL upstreams")
 	}
 	if item.Postgres == nil {
 		return errors.New("PostgreSQL settings are required")
@@ -353,6 +372,34 @@ func validatePostgres(item Upstream) error {
 		return errors.New("PostgreSQL upstream database is required")
 	}
 	return validateClientTLS(item.Postgres.UpstreamTLS, "PostgreSQL upstream TLS")
+}
+
+func validateMongoDB(item Upstream) error {
+	if _, _, err := net.SplitHostPort(item.Target); err != nil {
+		return errors.New("MongoDB target must be host:port")
+	}
+	if item.HTTP != nil || item.Redis != nil || item.MySQL != nil || item.Postgres != nil {
+		return errors.New("other protocol settings are not valid for MongoDB upstreams")
+	}
+	if item.MongoDB == nil {
+		return errors.New("MongoDB settings are required")
+	}
+	if item.MongoDB.ListenerUsername != "" && item.MongoDB.ListenerPassword == "" {
+		return errors.New("MongoDB listener username requires a listener password")
+	}
+	if item.MongoDB.ListenerUsername == "" && item.MongoDB.ListenerPassword != "" {
+		return errors.New("MongoDB listener password requires a listener username")
+	}
+	if item.MongoDB.UpstreamUsername != "" && item.MongoDB.UpstreamPassword == "" {
+		return errors.New("MongoDB upstream username requires an upstream password")
+	}
+	if item.MongoDB.UpstreamUsername == "" && item.MongoDB.UpstreamPassword != "" {
+		return errors.New("MongoDB upstream password requires an upstream username")
+	}
+	if item.MongoDB.AuthMechanism != "" && item.MongoDB.AuthMechanism != "SCRAM-SHA-256" && item.MongoDB.AuthMechanism != "SCRAM-SHA-1" {
+		return errors.New("MongoDB auth mechanism must be SCRAM-SHA-256 or SCRAM-SHA-1")
+	}
+	return validateClientTLS(item.MongoDB.UpstreamTLS, "MongoDB upstream TLS")
 }
 
 func validateListenerTLS(options *ListenerTLSOptions) error {
@@ -440,6 +487,12 @@ func PublicUpstreams(items []Upstream) []Upstream {
 			result[i].Postgres.UpstreamPasswordSet = result[i].Postgres.UpstreamPassword != ""
 			result[i].Postgres.UpstreamPassword = ""
 		}
+		if result[i].MongoDB != nil {
+			result[i].MongoDB.ListenerPasswordSet = result[i].MongoDB.ListenerPassword != ""
+			result[i].MongoDB.ListenerPassword = ""
+			result[i].MongoDB.UpstreamPasswordSet = result[i].MongoDB.UpstreamPassword != ""
+			result[i].MongoDB.UpstreamPassword = ""
+		}
 		if result[i].HTTP != nil {
 			redactRules(result[i].HTTP.RequestHeaders)
 			redactRules(result[i].HTTP.ResponseHeaders)
@@ -474,6 +527,14 @@ func MergeSecrets(incoming, existing Upstream) Upstream {
 		}
 		if incoming.Postgres.UpstreamPassword == "" && incoming.Postgres.UpstreamPasswordSet {
 			incoming.Postgres.UpstreamPassword = existing.Postgres.UpstreamPassword
+		}
+	}
+	if incoming.MongoDB != nil && existing.MongoDB != nil {
+		if incoming.MongoDB.ListenerPassword == "" && incoming.MongoDB.ListenerPasswordSet {
+			incoming.MongoDB.ListenerPassword = existing.MongoDB.ListenerPassword
+		}
+		if incoming.MongoDB.UpstreamPassword == "" && incoming.MongoDB.UpstreamPasswordSet {
+			incoming.MongoDB.UpstreamPassword = existing.MongoDB.UpstreamPassword
 		}
 	}
 	if incoming.HTTP != nil && existing.HTTP != nil {

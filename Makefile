@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-web build test test-mysql-matrix test-postgres-matrix test-search-matrix lint fmt run demo clean
+.PHONY: dev dev-api dev-web build test test-mysql-matrix test-postgres-matrix test-search-matrix test-mongo-matrix lint fmt run demo clean
 
 GO_CACHE ?= /tmp/portscope-go-cache
 
@@ -30,6 +30,9 @@ test-postgres-matrix:
 
 test-search-matrix:
 	./scripts/test-search-matrix.sh
+
+test-mongo-matrix:
+	./scripts/test-mongo-matrix.sh
 
 lint:
 	npm run lint

@@ -16,7 +16,7 @@ An adapter owns everything callers should not need to understand: listening, ups
 
 The shared `Interaction` is an observation envelope, not a universal query abstraction. It standardizes identity, time, duration, outcome, request/response payloads, and searchable attributes. `Operation`, payload kind, and attributes retain protocol vocabulary. The UI can therefore offer shared filtering and timing while adding a protocol-specific renderer without teaching the manager or store about that protocol.
 
-This passes the multi-adapter test today: HTTP, Redis, MySQL, and PostgreSQL differ substantially behind the same small interface. Elasticsearch/OpenSearch also demonstrates a second extension shape: a semantic profile can deepen an existing transport adapter without duplicating its listener, TLS, mutation, streaming, or WebSocket implementation.
+This passes the multi-adapter test today: HTTP, Redis, MySQL, PostgreSQL, and MongoDB differ substantially behind the same small interface. Elasticsearch/OpenSearch also demonstrates a second extension shape: a semantic profile can deepen an existing transport adapter without duplicating its listener, TLS, mutation, streaming, or WebSocket implementation.
 
 ## Why database protocols remain substantial
 
@@ -26,15 +26,17 @@ The MySQL adapter therefore remains a deep module behind the existing seam. It g
 
 Database adapters produce the same `Interaction` envelope only after their own state machines have identified a meaningful operation. MySQL and PostgreSQL confirm that adding one does not require enlarging the runtime manager’s interface.
 
+The MongoDB adapter terminates only the state that must differ across the two trust legs: `hello`, topology advertisement, and SCRAM. It reads an unauthenticated upstream `hello` to preserve real server limits, but does not disclose an upstream username or start upstream SCRAM until the listener identity succeeds. After both legs authenticate, commands are forwarded as their original wire bytes instead of being reissued through a database client. That keeps logical sessions, transaction numbers, cursor IDs, document sequences, write concerns, and change-stream semantics owned by MongoDB while a bounded BSON parser observes request IDs and results alongside the stream.
+
 ## Storage and live delivery
 
 Configuration is an atomically replaced, owner-readable JSON document. Interactions are a compacted JSONL journal plus an in-memory newest-first ring. Startup replays the journal, retains the newest 5,000 interactions, and compacts an oversized journal. Runtime compaction keeps disk retention close to the same bound. SSE subscribers receive completed interactions and heartbeats; a slow browser drops live notifications and recovers authoritative state through the list endpoint rather than applying backpressure to proxied traffic.
 
 ## Trust and safety
 
-Authorization, proxy-authorization, cookie, and set-cookie HTTP headers are redacted before persistence. Configured sensitive header rules extend that set. Redis listener authentication is terminated before an upstream connection is authenticated; `AUTH` and `HELLO ... AUTH` payloads are redacted, and the latter is rewritten without its listener credentials. MySQL and PostgreSQL authentication packets are never captured as payloads. Redis, MySQL, and PostgreSQL have separate listener/upstream write-only password settings. Persisted secrets are write-only at the API seam: a public configuration carries only a `valueSet`/`passwordSet` marker, and edit requests merge unchanged secrets inside the store module.
+Authorization, proxy-authorization, cookie, and set-cookie HTTP headers are redacted before persistence. Configured sensitive header rules extend that set. Redis listener authentication is terminated before an upstream connection is authenticated; `AUTH` and `HELLO ... AUTH` payloads are redacted, and the latter is rewritten without its listener credentials. MySQL and PostgreSQL authentication packets are never captured as payloads. MongoDB SCRAM payloads are represented only as a redaction marker. Redis, MySQL, PostgreSQL, and MongoDB have separate listener/upstream write-only password settings. Persisted secrets are write-only at the API seam: a public configuration carries only a `valueSet`/`passwordSet` marker, and edit requests merge unchanged secrets inside the store module.
 
-TLS construction is another shared deep module used by all four protocol adapters. It owns the TLS 1.2 floor, system/custom trust roots, SNI overrides, client certificates, listener certificates, client-CA verification, and ALPN. HTTP-specific protocol selection, WebSocket upgrade/frame handling, Redis authentication/database state, MySQL handshakes, and PostgreSQL SSLRequest/direct-TLS negotiation remain inside their adapters.
+TLS construction is another shared deep module used by every transport adapter. It owns the TLS 1.2 floor, system/custom trust roots, SNI overrides, client certificates, listener certificates, client-CA verification, and ALPN. HTTP-specific protocol selection, WebSocket upgrade/frame handling, Redis authentication/database state, MySQL handshakes, PostgreSQL SSLRequest/direct-TLS negotiation, and MongoDB direct TLS remain inside their adapters.
 
 Semantic profiles are internal seams inside a transport adapter, not new runtime interfaces. The Elasticsearch/OpenSearch profile receives the already bounded, redacted HTTP observation and enriches its protocol vocabulary, structured payload, outcome, and searchable attributes. HTTP forwarding has no dependency on search semantics, and the runtime manager still sees only `Adapter.Run`.
 

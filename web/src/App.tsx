@@ -129,7 +129,7 @@ export default function App() {
       <section className="traffic-pane">
         <div className="toolbar">
           <label className="search"><span>⌕</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Filter operation, body, error…"/></label>
-          <div className="segmented"><button className={!protocolFilter ? "active" : ""} onClick={() => setProtocolFilter("")}>ALL</button><button className={protocolFilter === "http" ? "active" : ""} onClick={() => setProtocolFilter("http")}>HTTP</button><button className={protocolFilter === "websocket" ? "active" : ""} onClick={() => setProtocolFilter("websocket")}>WS</button><button className={protocolFilter === "elasticsearch" ? "active" : ""} onClick={() => setProtocolFilter("elasticsearch")}>SEARCH</button><button className={protocolFilter === "redis" ? "active" : ""} onClick={() => setProtocolFilter("redis")}>REDIS</button><button className={protocolFilter === "mysql" ? "active" : ""} onClick={() => setProtocolFilter("mysql")}>MYSQL</button><button className={protocolFilter === "postgres" ? "active" : ""} onClick={() => setProtocolFilter("postgres")}>PG</button></div>
+          <div className="segmented"><button className={!protocolFilter ? "active" : ""} onClick={() => setProtocolFilter("")}>ALL</button><button className={protocolFilter === "http" ? "active" : ""} onClick={() => setProtocolFilter("http")}>HTTP</button><button className={protocolFilter === "websocket" ? "active" : ""} onClick={() => setProtocolFilter("websocket")}>WS</button><button className={protocolFilter === "elasticsearch" ? "active" : ""} onClick={() => setProtocolFilter("elasticsearch")}>SEARCH</button><button className={protocolFilter === "redis" ? "active" : ""} onClick={() => setProtocolFilter("redis")}>REDIS</button><button className={protocolFilter === "mysql" ? "active" : ""} onClick={() => setProtocolFilter("mysql")}>MYSQL</button><button className={protocolFilter === "postgres" ? "active" : ""} onClick={() => setProtocolFilter("postgres")}>PG</button><button className={protocolFilter === "mongodb" ? "active" : ""} onClick={() => setProtocolFilter("mongodb")}>MONGO</button></div>
           <button className="clear" onClick={clearTraffic}>Clear</button>
         </div>
         <div className="table-head"><span>TIME</span><span>UPSTREAM</span><span>OPERATION</span><span>RESULT</span><span>DURATION</span><span>SIZE</span></div>
@@ -174,24 +174,27 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
     }
     onSave(draft);
   }
-  function selectProtocol(protocol: "http" | "elasticsearch" | "redis" | "mysql" | "postgres") {
+  function selectProtocol(protocol: "http" | "elasticsearch" | "redis" | "mysql" | "postgres" | "mongodb") {
     if (protocol === draft.protocol) return;
     if (protocol === "http") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9000", target: "http://127.0.0.1:3000", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9000", target: "http://127.0.0.1:3000", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "elasticsearch") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9201", target: "http://127.0.0.1:9200", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:9201", target: "http://127.0.0.1:9200", listenerTls: undefined, redis: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, http: { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "redis") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:6380", target: "127.0.0.1:6379", http: undefined, mysql: undefined, postgres: undefined, listenerTls: undefined, redis: { database: 0, upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:6380", target: "127.0.0.1:6379", http: undefined, mysql: undefined, postgres: undefined, mongodb: undefined, listenerTls: undefined, redis: { database: 0, upstreamTls: { ...emptyTLS } } });
     } else if (protocol === "mysql") {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:3307", target: "127.0.0.1:3306", http: undefined, redis: undefined, postgres: undefined, listenerTls: undefined, mysql: { listenerUsername: "portscope", upstreamUsername: "root", upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:3307", target: "127.0.0.1:3306", http: undefined, redis: undefined, postgres: undefined, mongodb: undefined, listenerTls: undefined, mysql: { listenerUsername: "portscope", upstreamUsername: "root", upstreamTls: { ...emptyTLS } } });
+    } else if (protocol === "postgres") {
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:5433", target: "127.0.0.1:5432", http: undefined, redis: undefined, mysql: undefined, mongodb: undefined, listenerTls: undefined, postgres: { listenerUsername: "portscope", upstreamUsername: "postgres", database: "postgres", upstreamTls: { ...emptyTLS } } });
     } else {
-      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:5433", target: "127.0.0.1:5432", http: undefined, redis: undefined, mysql: undefined, listenerTls: undefined, postgres: { listenerUsername: "portscope", upstreamUsername: "postgres", database: "postgres", upstreamTls: { ...emptyTLS } } });
+      setDraft({ ...draft, protocol, listenAddr: "127.0.0.1:27018", target: "127.0.0.1:27017", http: undefined, redis: undefined, mysql: undefined, postgres: undefined, listenerTls: undefined, mongodb: { listenerAuthSource: "admin", upstreamAuthSource: "admin", authMechanism: "", upstreamTls: { ...emptyTLS } } });
     }
   }
   const httpOptions = draft.http ?? { requestHeaders: [], responseHeaders: [], upstreamTls: { ...emptyTLS } };
   const redisOptions = draft.redis ?? { database: 0, upstreamTls: { ...emptyTLS } };
   const mysqlOptions = draft.mysql ?? { listenerUsername: "portscope", upstreamUsername: "root", upstreamTls: { ...emptyTLS } };
   const postgresOptions = draft.postgres ?? { listenerUsername: "portscope", upstreamUsername: "postgres", database: "postgres", upstreamTls: { ...emptyTLS } };
+  const mongoOptions = draft.mongodb ?? { listenerAuthSource: "admin", upstreamAuthSource: "admin", authMechanism: "" as const, upstreamTls: { ...emptyTLS } };
 
   return <div className="modal-backdrop" onMouseDown={onClose}>
     <form className="editor advanced-editor" onSubmit={submit} onMouseDown={event => event.stopPropagation()}>
@@ -203,11 +206,12 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
           <button type="button" className={draft.protocol === "redis" ? "active" : ""} onClick={() => selectProtocol("redis")}><i className="protocol redis">R</i><span><b>REDIS</b><small>RESP2 + RESP3</small></span></button>
           <button type="button" className={draft.protocol === "mysql" ? "active" : ""} onClick={() => selectProtocol("mysql")}><i className="protocol mysql">M</i><span><b>MYSQL</b><small>CLASSIC PROTOCOL</small></span></button>
           <button type="button" className={draft.protocol === "postgres" ? "active" : ""} onClick={() => selectProtocol("postgres")}><i className="protocol postgres">P</i><span><b>POSTGRESQL</b><small>PROTOCOL V3</small></span></button>
+          <button type="button" className={draft.protocol === "mongodb" ? "active" : ""} onClick={() => selectProtocol("mongodb")}><i className="protocol mongodb">D</i><span><b>MONGODB</b><small>OP_MSG + SCRAM</small></span></button>
         </div></div>
         <label>DISPLAY NAME<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="Orders API"/></label>
         <div className="field-pair">
           <label>LISTEN ADDRESS<input value={draft.listenAddr} onChange={event => setDraft({ ...draft, listenAddr: event.target.value })} placeholder="127.0.0.1:9000"/><small>Your application connects here</small></label>
-          <label>UPSTREAM TARGET<input value={draft.target} onChange={event => setDraft({ ...draft, target: event.target.value })} placeholder={draft.protocol === "http" ? "https://api.internal" : draft.protocol === "elasticsearch" ? "https://search.internal:9200" : draft.protocol === "redis" ? "cache.internal:6379" : draft.protocol === "postgres" ? "postgres.internal:5432" : "mysql.internal:3306"}/><small>{draft.protocol === "http" || draft.protocol === "elasticsearch" ? "http://, https://, or h2c://" : "host:port"}</small></label>
+          <label>UPSTREAM TARGET<input value={draft.target} onChange={event => setDraft({ ...draft, target: event.target.value })} placeholder={draft.protocol === "http" ? "https://api.internal" : draft.protocol === "elasticsearch" ? "https://search.internal:9200" : draft.protocol === "redis" ? "cache.internal:6379" : draft.protocol === "postgres" ? "postgres.internal:5432" : draft.protocol === "mongodb" ? "mongo.internal:27017" : "mysql.internal:3306"}/><small>{draft.protocol === "http" || draft.protocol === "elasticsearch" ? "http://, https://, or h2c://" : "host:port"}</small></label>
         </div>
 
         {draft.protocol === "http" && <HTTPSettings value={draft} options={httpOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
@@ -215,6 +219,7 @@ function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Ups
         {draft.protocol === "redis" && <RedisSettings value={draft} options={redisOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "mysql" && <MySQLSettings value={draft} options={mysqlOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
         {draft.protocol === "postgres" && <PostgresSettings value={draft} options={postgresOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
+        {draft.protocol === "mongodb" && <MongoDBSettings value={draft} options={mongoOptions} onChange={next => setDraft({ ...draft, ...next })}/>}
 
         <label className="enabled"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft({ ...draft, enabled: event.target.checked })}/><span><b>Start this proxy</b><small>Disabled upstreams keep their configuration and history.</small></span></label>
         {localError && <p className="form-error">{localError}</p>}
@@ -324,6 +329,36 @@ function PostgresSettings({ value, options, onChange }: { value: Upstream; optio
   </div>;
 }
 
+function MongoDBSettings({ value, options, onChange }: { value: Upstream; options: NonNullable<Upstream["mongodb"]>; onChange: (value: Partial<Upstream>) => void }) {
+  const update = (mongodb: NonNullable<Upstream["mongodb"]>) => onChange({ mongodb });
+  return <div className="advanced-stack">
+    <details className="config-section" open>
+      <summary><span>APPLICATION → PORTSCOPE</span><small>{options.listenerPasswordSet || options.listenerPassword ? "SCRAM credentials stored" : "no authentication"}</small></summary>
+      <div className="field-pair">
+        <label>LISTENER USERNAME<input value={options.listenerUsername ?? ""} onChange={event => update({ ...options, listenerUsername: event.target.value })} placeholder="Optional proxy identity"/><small>Leave both credentials blank for an open local listener.</small></label>
+        <SecretInput label="LISTENER PASSWORD" value={options.listenerPassword ?? ""} valueSet={options.listenerPasswordSet ?? false} onChange={(listenerPassword, listenerPasswordSet) => update({ ...options, listenerPassword, listenerPasswordSet })}/>
+      </div>
+      <label>AUTHENTICATION DATABASE<input value={options.listenerAuthSource ?? "admin"} onChange={event => update({ ...options, listenerAuthSource: event.target.value })} placeholder="admin"/></label>
+    </details>
+    <details className="config-section" open>
+      <summary><span>PORTSCOPE → MONGODB</span><small>{options.upstreamTls?.enabled ? "TLS" : "plaintext"}</small></summary>
+      <div className="field-pair">
+        <label>UPSTREAM USERNAME<input value={options.upstreamUsername ?? ""} onChange={event => update({ ...options, upstreamUsername: event.target.value })} placeholder="Optional database user"/></label>
+        <SecretInput label="UPSTREAM PASSWORD" value={options.upstreamPassword ?? ""} valueSet={options.upstreamPasswordSet ?? false} onChange={(upstreamPassword, upstreamPasswordSet) => update({ ...options, upstreamPassword, upstreamPasswordSet })}/>
+      </div>
+      <div className="field-pair">
+        <label>AUTHENTICATION DATABASE<input value={options.upstreamAuthSource ?? "admin"} onChange={event => update({ ...options, upstreamAuthSource: event.target.value })} placeholder="admin"/></label>
+        <label>SCRAM MECHANISM<select value={options.authMechanism ?? ""} onChange={event => update({ ...options, authMechanism: event.target.value as NonNullable<Upstream["mongodb"]>["authMechanism"] })}><option value="">AUTO</option><option value="SCRAM-SHA-256">SCRAM-SHA-256</option><option value="SCRAM-SHA-1">SCRAM-SHA-1</option></select><small>Auto prefers SHA-256 and falls back when advertised.</small></label>
+      </div>
+      <TLSClientFields value={options.upstreamTls ?? emptyTLS} onChange={upstreamTls => update({ ...options, upstreamTls })}/>
+    </details>
+    <details className="config-section">
+      <summary><span>LISTENER TLS</span><small>{value.listenerTls?.enabled ? "required" : "plaintext"}</small></summary>
+      <ListenerTLSFields value={value.listenerTls ?? { enabled: false }} onChange={listenerTls => onChange({ listenerTls })} mode="mongodb"/>
+    </details>
+  </div>;
+}
+
 function SecretInput({ label, value, valueSet, required = false, onChange }: { label: string; value: string; valueSet: boolean; required?: boolean; onChange: (value: string, valueSet: boolean) => void }) {
   return <label>{label}<input type="password" autoComplete="new-password" value={value} required={required && !valueSet} onChange={event => onChange(event.target.value, event.target.value !== "")} placeholder={valueSet ? "Stored — enter to replace" : required ? "Required" : "Optional"}/><small>{valueSet && <button className="inline-danger" type="button" onClick={() => onChange("", false)}>Clear stored password</button>}</small></label>;
 }
@@ -356,10 +391,10 @@ function TLSClientFields({ value, onChange }: { value: ClientTLSOptions; onChang
   </div>;
 }
 
-function ListenerTLSFields({ value, onChange, mode = "http" }: { value: NonNullable<Upstream["listenerTls"]>; onChange: (value: NonNullable<Upstream["listenerTls"]>) => void; mode?: "http" | "redis" | "mysql" | "postgres" }) {
-  const listenerName = mode === "mysql" ? "MySQL" : mode === "postgres" ? "PostgreSQL" : mode === "redis" ? "Redis" : "HTTPS";
+function ListenerTLSFields({ value, onChange, mode = "http" }: { value: NonNullable<Upstream["listenerTls"]>; onChange: (value: NonNullable<Upstream["listenerTls"]>) => void; mode?: "http" | "redis" | "mysql" | "postgres" | "mongodb" }) {
+  const listenerName = mode === "mysql" ? "MySQL" : mode === "postgres" ? "PostgreSQL" : mode === "mongodb" ? "MongoDB" : mode === "redis" ? "Redis" : "HTTPS";
   return <div className="tls-fields">
-    <label className="enabled compact"><input type="checkbox" checked={value.enabled} onChange={event => onChange(event.target.checked ? { ...value, enabled: true } : { enabled: false })}/><span><b>{mode === "http" ? "Serve HTTPS" : `Require ${listenerName} TLS`}</b><small>{mode === "mysql" ? "TLS is negotiated inside the MySQL connection phase." : mode === "postgres" ? "TLS is negotiated with PostgreSQL SSLRequest or direct TLS." : mode === "redis" ? "The application connects with rediss:// from the first byte." : "HTTP/1.1 and HTTP/2 are negotiated with ALPN."}</small></span></label>
+      <label className="enabled compact"><input type="checkbox" checked={value.enabled} onChange={event => onChange(event.target.checked ? { ...value, enabled: true } : { enabled: false })}/><span><b>{mode === "http" ? "Serve HTTPS" : `Require ${listenerName} TLS`}</b><small>{mode === "mysql" ? "TLS is negotiated inside the MySQL connection phase." : mode === "postgres" ? "TLS is negotiated with PostgreSQL SSLRequest or direct TLS." : mode === "mongodb" ? "The application connects with MongoDB TLS from the first byte." : mode === "redis" ? "The application connects with rediss:// from the first byte." : "HTTP/1.1 and HTTP/2 are negotiated with ALPN."}</small></span></label>
     {value.enabled && <>
       <div className="field-pair"><label>CERTIFICATE PEM<input value={value.certFile ?? ""} onChange={event => onChange({ ...value, certFile: event.target.value })} placeholder="/path/to/server.pem"/></label><label>PRIVATE KEY<input value={value.keyFile ?? ""} onChange={event => onChange({ ...value, keyFile: event.target.value })} placeholder="/path/to/server-key.pem"/></label></div>
       <label>CLIENT CA PEM<input value={value.clientCaFile ?? ""} onChange={event => onChange({ ...value, clientCaFile: event.target.value })} placeholder="/path/to/client-ca.pem"/><small>Optional; verifies a client certificate when one is presented.</small></label>
@@ -388,9 +423,14 @@ function resultLabel(item: Interaction) {
     if (item.attributes?.hits) return `${item.attributes.hitRelation === "gte" ? "≥" : ""}${item.attributes.hits} HITS`;
     if (item.attributes?.count) return `${item.attributes.count} DOCS`;
   }
+  if (item.protocol === "mongodb") {
+    if (item.attributes?.writeErrors && item.attributes.writeErrors !== "0") return `${item.attributes.writeErrors} FAIL`;
+    if (item.attributes?.documents) return `${item.attributes.documents} DOCS`;
+    if (item.attributes?.n) return `${item.attributes.n} OK`;
+  }
   return item.outcome === "ok" ? "OK" : "ERR";
 }
-function protocolGlyph(protocol: Interaction["protocol"] | Upstream["protocol"]) { return protocol === "http" ? "H" : protocol === "websocket" ? "W" : protocol === "elasticsearch" ? "E" : protocol === "redis" ? "R" : protocol === "postgres" ? "P" : "M"; }
+function protocolGlyph(protocol: Interaction["protocol"] | Upstream["protocol"]) { return protocol === "http" ? "H" : protocol === "websocket" ? "W" : protocol === "elasticsearch" ? "E" : protocol === "redis" ? "R" : protocol === "postgres" ? "P" : protocol === "mongodb" ? "D" : "M"; }
 function shortConnection(value?: string) { if (!value) return "—"; return value.length > 18 ? value.slice(0, 15) + "…" : value; }
 function matches(item: Interaction, query: string) {
   const text = [item.operation, item.request.summary, item.request.text, item.request.json ? JSON.stringify(item.request.json) : "", item.response.text, item.response.json ? JSON.stringify(item.response.json) : "", item.error, item.attributes ? JSON.stringify(item.attributes) : ""].filter(Boolean).join(" ").toLowerCase();

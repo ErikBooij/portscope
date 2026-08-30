@@ -16,6 +16,7 @@ import (
 	"github.com/erikbooij/portscope/internal/observation"
 	"github.com/erikbooij/portscope/internal/proxy"
 	"github.com/erikbooij/portscope/internal/proxy/httpadapter"
+	"github.com/erikbooij/portscope/internal/proxy/mongoadapter"
 	"github.com/erikbooij/portscope/internal/proxy/mysqladapter"
 	"github.com/erikbooij/portscope/internal/proxy/postgresadapter"
 	"github.com/erikbooij/portscope/internal/proxy/redisadapter"
@@ -46,6 +47,7 @@ func main() {
 		"redis":         func() proxy.Adapter { return redisadapter.New() },
 		"mysql":         func() proxy.Adapter { return mysqladapter.New() },
 		"postgres":      func() proxy.Adapter { return postgresadapter.New() },
+		"mongodb":       func() proxy.Adapter { return mongoadapter.New() },
 	})
 	manager.Apply(ctx, configuration.List())
 	defer manager.Close()
