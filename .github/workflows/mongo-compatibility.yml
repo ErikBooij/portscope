@@ -2,7 +2,12 @@ name: MongoDB compatibility
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: mongo-compatibility-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

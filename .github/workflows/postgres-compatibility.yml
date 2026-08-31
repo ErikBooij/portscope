@@ -2,7 +2,12 @@ name: PostgreSQL compatibility
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: postgres-compatibility-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
