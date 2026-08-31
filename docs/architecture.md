@@ -32,7 +32,7 @@ The RabbitMQ adapter follows the same trust-boundary principle without pretendin
 
 ## Storage and live delivery
 
-Configuration is an atomically replaced, owner-readable JSON document. Interactions are a compacted JSONL journal plus an in-memory newest-first ring. Startup replays the journal, retains the newest 5,000 interactions, and compacts an oversized journal. Runtime compaction keeps disk retention close to the same bound. SSE subscribers receive completed interactions and heartbeats; a slow browser drops live notifications and recovers authoritative state through the list endpoint rather than applying backpressure to proxied traffic.
+Configuration is a versioned, atomically replaced, owner-readable `portscope.json` document committed with a project. The config module hides legacy migration, strict decoding, environment-backed secret materialization, and config-relative TLS/schema paths behind `Store.RuntimeList`; stored and management-interface copies remain unresolved. Interactions are a separate, gitignored `.portscope/interactions.jsonl` journal plus an in-memory newest-first ring. Startup replays the journal, retains the newest 5,000 interactions, and compacts an oversized journal. SSE subscribers receive completed interactions and heartbeats; a slow browser drops live notifications and recovers authoritative state through the list endpoint rather than applying backpressure to proxied traffic.
 
 ## Trust and safety
 

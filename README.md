@@ -13,18 +13,46 @@ Portscope currently has eight real protocol adapters:
 - **MongoDB wire protocol:** MongoDB 6.0 through 8.3; modern `OP_MSG` plus legacy handshake parsing; terminated SCRAM-SHA-256/SHA-1 listener authentication; delayed, independently authenticated upstream SCRAM; direct TLS and mutual TLS on either leg; raw post-auth forwarding that preserves sessions, transactions, cursors, change streams, and write concerns; document-sequence inspection; request-ID correlation; Extended JSON capture; and cursor/write-result summaries.
 - **RabbitMQ AMQP 0-9-1:** RabbitMQ 3.13 through 4.3; terminated listener PLAIN authentication and virtual-host policy; delayed, independently authenticated broker connection with a separate identity and virtual host; direct TLS and mutual TLS on either leg; bounded frame/table parsing; channel-aware RPC correlation; content method/header/body assembly; JSON and message-property capture; publisher confirms, consumer delivery, acknowledgements, returned messages, transactions, and heartbeats.
 
-On first run Portscope creates an **Echo Lab** HTTP upstream on `127.0.0.1:9081`. “Generate traffic” sends three real requests through that proxy, so the interface is useful immediately.
+## Install
 
-## Run
+Download the archive for your platform from [GitHub Releases](https://github.com/erikbooij/portscope/releases), verify it against `checksums.txt`, and put `portscope` on your `PATH`. With Go 1.26.6 or newer, you can instead install directly from source:
 
-Requirements: Go 1.26+, Node 22+.
+```bash
+go install github.com/erikbooij/portscope@latest
+```
+
+The React interface is compiled and embedded in every binary, including binaries produced by `go install`; Node.js is not needed to run Portscope.
+
+## Use in a project
+
+Initialize one committed configuration per repository:
+
+```bash
+cd your-project
+portscope init
+git add portscope.json .gitignore
+portscope
+```
+
+Portscope reads `./portscope.json` and writes captures to the gitignored `./.portscope/` directory. `portscope init` adds that state directory to the configuration directory's `.gitignore` without replacing existing entries. Open <http://127.0.0.1:8090>, edit the generated Local API upstream if needed, then point the application at its listen address. UI edits are written atomically back to `portscope.json`.
+
+The defaults can be overridden without changing repository configuration. When `--config` points elsewhere, its sibling `.portscope/` becomes the default state directory:
+
+```bash
+portscope --config ./dev/portscope.json --state-dir ./.cache/portscope --addr 127.0.0.1:8091
+```
+
+Configuration is a versioned JSON document described by [portscope.schema.json](portscope.schema.json) and the [configuration guide](docs/configuration.md). Certificate, key, CA, and protobuf descriptor paths are resolved relative to the configuration file. Sensitive header values and database passwords can reference environment variables, for example `"upstreamPassword": "${DATABASE_PASSWORD}"`; missing variables fail startup instead of silently becoming empty. Resolved values exist only in the adapter’s runtime copy and are never written back or returned by the management interface.
+
+## Develop
+
+Requirements: Go 1.26.6+, Node 24+.
 
 ```bash
 npm ci
+make test
 make run
 ```
-
-Open <http://127.0.0.1:8090>. Configuration and the newest 5,000 interactions live under `./data` and survive restarts.
 
 For frontend hot reload:
 
@@ -38,9 +66,11 @@ make test-mongo-matrix # authenticated MongoDB 6.0, 7.0, 8.0, and 8.3
 make test-rabbit-matrix # RabbitMQ 3.13 and every released 4.x line through 4.3
 make lint      # TypeScript, gofmt, and go vet
 make build     # one binary with the React UI embedded
+make install   # install the current checkout into GOBIN
+make snapshot  # local GoReleaser archives under ./dist
 ```
 
-Docker is also supported with `docker compose up --build`. Add an explicit Compose port mapping for every configured proxy listener; container-local `127.0.0.1` targets refer to the container, not the host.
+Docker is also supported with `docker compose up --build`. The included Compose file mounts `portscope.json` and `.portscope/`. Add an explicit port mapping for every configured proxy listener; container-local `127.0.0.1` targets refer to the container, not the host.
 
 ## Configure an application
 
@@ -66,7 +96,7 @@ WebSocket upgrades are detected inside an HTTP upstream and proxied over `ws` or
 
 Redis authentication can use `AUTH <password>`, Redis 6+ ACL-style `AUTH <username> <password>`, or `HELLO ... AUTH`. Listener credentials never reach Redis: Portscope answers `AUTH` locally and strips the authentication clause from `HELLO` before forwarding it. It then authenticates upstream with its separate credentials. `SELECT` is locally accepted only for the configured database, so the application cannot silently move the owned upstream session. Enable listener TLS for `rediss://` application connections and upstream TLS independently; private CAs, SNI overrides, and mutual TLS are supported.
 
-Use an upstream’s `•••` action to edit it. Configuration updates restart only the affected proxy listener; captured history remains available. The app binds its UI and seeded listeners to loopback by default.
+Use an upstream’s `•••` action to edit it. Configuration updates restart only the affected proxy listener; captured history remains available. The app binds its UI and generated listeners to loopback by default.
 
 ## Architecture and limits
 
@@ -87,6 +117,10 @@ Current honest limits:
 
 ## Security behavior
 
-Configuration is written atomically with owner-only permissions. Redis, MySQL, PostgreSQL, MongoDB, and RabbitMQ passwords for both connection legs, plus sensitive injected header values, are returned by the API only as a “value is set” marker, so editing a configuration preserves a secret without disclosing it to the browser. TLS verification uses system roots unless a custom CA is configured, requires TLS 1.2 or newer, and supports mutual TLS. Certificate-verification bypass is available for diagnosis but deliberately marked dangerous in the editor.
+Configuration is written atomically with owner-only permissions. Never commit literal credentials: use `${ENV_VAR}` references for Redis, MySQL, PostgreSQL, MongoDB, and RabbitMQ passwords and for sensitive injected header values. Those values are returned by the API only as a “value is set” marker, so editing a configuration preserves the reference without disclosing it to the browser. TLS verification uses system roots unless a custom CA is configured, requires TLS 1.2 or newer, and supports mutual TLS. Certificate-verification bypass is available for diagnosis but deliberately marked dangerous in the editor.
 
 The interaction journal is periodically compacted to the configured retention window instead of growing forever. The health endpoint reports a degraded status if capture persistence fails. HTTP header mutation rejects hop-by-hop/framing headers and line breaks; Redis framing has nesting and size bounds.
+
+## License
+
+Portscope is available under the [Apache License 2.0](LICENSE).

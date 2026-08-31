@@ -27,3 +27,7 @@
 
   .inspector-head > .protocol { right: 48px; }
 }
+
+@media (max-width: 720px) {
+  .header-actions button:first-child { display: inline-block; }
+}

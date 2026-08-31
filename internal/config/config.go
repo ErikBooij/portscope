@@ -1,11 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -13,6 +15,18 @@ import (
 	"strings"
 	"sync"
 )
+
+const (
+	CurrentVersion  = 1
+	DefaultFilename = "portscope.json"
+	SchemaURL       = "https://raw.githubusercontent.com/erikbooij/portscope/main/portscope.schema.json"
+)
+
+type Document struct {
+	Schema    string     `json:"$schema,omitempty"`
+	Version   int        `json:"version"`
+	Upstreams []Upstream `json:"upstreams"`
+}
 
 type Upstream struct {
 	ID          string              `json:"id"`
@@ -181,17 +195,28 @@ func OpenStore(path string) (*Store, error) {
 	store := &Store{path: path}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		store.items = []Upstream{{ID: "demo-http", Name: "Portscope Echo Lab", Protocol: "http", ListenAddr: "127.0.0.1:9081", Target: "internal://echo", Enabled: true, HTTP: &HTTPOptions{}}}
-		return store, store.persist()
+		return nil, fmt.Errorf("configuration file %s: %w", path, os.ErrNotExist)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	if err := json.Unmarshal(data, &store.items); err != nil {
+	document, err := decodeDocument(data)
+	if err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
+	store.items = document.Upstreams
 	listeners := make(map[string]string)
-	for _, item := range store.items {
+	identifiers := make(map[string]struct{})
+	for index := range store.items {
+		clearWriteOnlyMarkers(&store.items[index])
+		item := store.items[index]
+		if !validUpstreamID(item.ID) {
+			return nil, fmt.Errorf("invalid upstream %q: id must contain only letters, numbers, dots, underscores, or hyphens", item.Name)
+		}
+		if _, exists := identifiers[item.ID]; exists {
+			return nil, fmt.Errorf("invalid upstream %q: duplicate id %q", item.Name, item.ID)
+		}
+		identifiers[item.ID] = struct{}{}
 		if err := Validate(item); err != nil {
 			return nil, fmt.Errorf("invalid upstream %q: %w", item.Name, err)
 		}
@@ -203,6 +228,60 @@ func OpenStore(path string) (*Store, error) {
 		}
 	}
 	return store, nil
+}
+
+func Create(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("configuration file %s already exists", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect configuration file: %w", err)
+	}
+	store := &Store{path: path, items: []Upstream{{
+		ID: "api", Name: "Local API", Protocol: "http", ListenAddr: "127.0.0.1:9000",
+		Target: "http://127.0.0.1:3000", Enabled: true, HTTP: &HTTPOptions{},
+	}}}
+	return store.persist()
+}
+
+func decodeDocument(data []byte) (Document, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return Document{}, errors.New("configuration file is empty")
+	}
+	if trimmed[0] == '[' {
+		var upstreams []Upstream
+		if err := decodeStrict(data, &upstreams); err != nil {
+			return Document{}, err
+		}
+		return Document{Schema: SchemaURL, Version: CurrentVersion, Upstreams: upstreams}, nil
+	}
+	var document Document
+	if err := decodeStrict(data, &document); err != nil {
+		return Document{}, err
+	}
+	if document.Version != CurrentVersion {
+		return Document{}, fmt.Errorf("unsupported configuration version %d (expected %d)", document.Version, CurrentVersion)
+	}
+	if document.Upstreams == nil {
+		document.Upstreams = []Upstream{}
+	}
+	return document, nil
+}
+
+func decodeStrict(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("configuration file must contain exactly one JSON value")
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) List() []Upstream {
@@ -223,9 +302,22 @@ func (s *Store) Get(id string) (Upstream, bool) {
 }
 
 func (s *Store) Put(item Upstream) (Upstream, error) {
+	if item.ID != "" && !validUpstreamID(item.ID) {
+		return Upstream{}, errors.New("id must contain only letters, numbers, dots, underscores, or hyphens")
+	}
 	if err := Validate(item); err != nil {
 		return Upstream{}, err
 	}
+	if item.Enabled {
+		runtime := cloneUpstream(item)
+		if err := materializeUpstream(&runtime, filepath.Dir(s.path), os.LookupEnv); err != nil {
+			return Upstream{}, err
+		}
+		if err := Validate(runtime); err != nil {
+			return Upstream{}, fmt.Errorf("after runtime expansion: %w", err)
+		}
+	}
+	clearWriteOnlyMarkers(&item)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if item.ID == "" {
@@ -244,6 +336,44 @@ func (s *Store) Put(item Upstream) (Upstream, error) {
 	}
 	s.items = append(s.items, cloneUpstream(item))
 	return cloneUpstream(item), s.persistLocked()
+}
+
+func validUpstreamID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '.' || character == '_' || character == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func clearWriteOnlyMarkers(item *Upstream) {
+	if item.HTTP != nil {
+		for index := range item.HTTP.RequestHeaders {
+			item.HTTP.RequestHeaders[index].ValueSet = false
+		}
+		for index := range item.HTTP.ResponseHeaders {
+			item.HTTP.ResponseHeaders[index].ValueSet = false
+		}
+	}
+	if item.Redis != nil {
+		item.Redis.ListenerPasswordSet, item.Redis.UpstreamPasswordSet = false, false
+	}
+	if item.MySQL != nil {
+		item.MySQL.ListenerPasswordSet, item.MySQL.UpstreamPasswordSet = false, false
+	}
+	if item.Postgres != nil {
+		item.Postgres.ListenerPasswordSet, item.Postgres.UpstreamPasswordSet = false, false
+	}
+	if item.MongoDB != nil {
+		item.MongoDB.ListenerPasswordSet, item.MongoDB.UpstreamPasswordSet = false, false
+	}
+	if item.RabbitMQ != nil {
+		item.RabbitMQ.ListenerPasswordSet, item.RabbitMQ.UpstreamPasswordSet = false, false
+	}
 }
 
 func (s *Store) Delete(id string) error {
@@ -686,7 +816,8 @@ func (s *Store) persistLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o750); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	data, err := json.MarshalIndent(s.items, "", "  ")
+	document := Document{Schema: SchemaURL, Version: CurrentVersion, Upstreams: s.items}
+	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -699,6 +830,7 @@ func (s *Store) persistLocked() error {
 		_ = file.Close()
 		return err
 	}
+	data = append(data, '\n')
 	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
 		return err

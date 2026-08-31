@@ -48,13 +48,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/interactions", s.listInteractions)
 	mux.HandleFunc("DELETE /api/interactions", s.clearInteractions)
 	mux.HandleFunc("GET /api/events", s.events)
-	mux.HandleFunc("POST /api/demo", s.demo)
 	dist, _ := fs.Sub(webui.Files, "dist")
 	files := http.FileServer(http.FS(dist))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
+		if strings.HasPrefix(path, "api/") {
+			problem(w, http.StatusNotFound, "API endpoint not found")
+			return
+		}
 		if path != "" {
 			if _, err := fs.Stat(dist, path); err == nil {
+				if strings.HasPrefix(path, "assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				files.ServeHTTP(w, r)
 				return
 			}
@@ -64,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "web UI unavailable", 500)
 			return
 		}
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(data)
 	})
@@ -93,7 +100,10 @@ func (s *Server) putUpstream(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, err.Error())
 		return
 	}
-	s.manager.Apply(s.root, s.config.List())
+	if err := s.applyConfiguration(); err != nil {
+		problem(w, 500, err.Error())
+		return
+	}
 	writeJSON(w, 200, config.PublicUpstream(saved))
 }
 func (s *Server) deleteUpstream(w http.ResponseWriter, r *http.Request) {
@@ -105,8 +115,20 @@ func (s *Server) deleteUpstream(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, err.Error())
 		return
 	}
-	s.manager.Apply(s.root, s.config.List())
+	if err := s.applyConfiguration(); err != nil {
+		problem(w, 500, err.Error())
+		return
+	}
 	w.WriteHeader(204)
+}
+
+func (s *Server) applyConfiguration() error {
+	items, err := s.config.RuntimeList()
+	if err != nil {
+		return fmt.Errorf("materialize configuration: %w", err)
+	}
+	s.manager.Apply(s.root, items)
+	return nil
 }
 func (s *Server) listInteractions(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -176,39 +198,6 @@ func sameOrigin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-func (s *Server) demo(w http.ResponseWriter, _ *http.Request) {
-	var demo *config.Upstream
-	for _, item := range s.config.List() {
-		if item.ID == "demo-http" && item.Enabled {
-			copy := item
-			demo = &copy
-			break
-		}
-	}
-	if demo == nil {
-		problem(w, 409, "the Echo Lab upstream is disabled or removed")
-		return
-	}
-	go generateDemo(*demo)
-	writeJSON(w, 202, map[string]string{"status": "generating"})
-}
-
-func generateDemo(item config.Upstream) {
-	client := http.Client{Timeout: 3 * time.Second}
-	base := "http://" + item.ListenAddr
-	requests := []struct{ method, path, body string }{{"GET", "/v1/health?verbose=true", ""}, {"POST", "/v1/orders", "{\"sku\":\"signal-lamp\",\"quantity\":2}"}, {"GET", "/v1/orders/404", ""}}
-	for _, sample := range requests {
-		request, _ := http.NewRequest(sample.method, base+sample.path, strings.NewReader(sample.body))
-		if sample.body != "" {
-			request.Header.Set("Content-Type", "application/json")
-		}
-		response, err := client.Do(request)
-		if err == nil {
-			_ = response.Body.Close()
-		}
-		time.Sleep(180 * time.Millisecond)
-	}
 }
 func decodeJSON(r *http.Request, target any) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))

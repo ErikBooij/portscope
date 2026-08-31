@@ -2,11 +2,134 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCreateWritesVersionedDocumentAndOpenRequiresExplicitConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, DefaultFilename)
+	if _, err := OpenStore(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing configuration error = %v", err)
+	}
+	if err := Create(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"$schema"`) || !strings.Contains(string(data), `"version": 1`) || !strings.Contains(string(data), `"upstreams"`) {
+		t.Fatalf("versioned configuration = %s", data)
+	}
+	if err := Create(path); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("second create error = %v", err)
+	}
+	store, err := OpenStore(path)
+	if err != nil || len(store.List()) != 1 || store.List()[0].ID != "api" {
+		t.Fatalf("starter store = %#v, %v", store, err)
+	}
+}
+
+func TestRuntimeListResolvesEnvironmentSecretsAndConfigRelativeFilesWithoutMutatingSource(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, DefaultFilename)
+	document := Document{Version: CurrentVersion, Upstreams: []Upstream{{
+		ID: "api", Name: "API", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "https://localhost:3000", Enabled: true,
+		HTTP: &HTTPOptions{RequestHeaders: []HeaderRule{{Action: "set", Name: "Authorization", Value: "Bearer ${PORTSCOPE_TEST_TOKEN}", Sensitive: true}}, UpstreamTLS: ClientTLSOptions{Enabled: true, CAFile: "certs/ca.pem"}},
+	}}}
+	data, _ := json.Marshal(document)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PORTSCOPE_TEST_TOKEN", "secret")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := store.RuntimeList()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := runtime[0].HTTP.RequestHeaders[0].Value; got != "Bearer secret" {
+		t.Fatalf("runtime header = %q", got)
+	}
+	if got := runtime[0].HTTP.UpstreamTLS.CAFile; got != filepath.Join(directory, "certs", "ca.pem") {
+		t.Fatalf("runtime CA path = %q", got)
+	}
+	if got := store.List()[0].HTTP.RequestHeaders[0].Value; got != "Bearer ${PORTSCOPE_TEST_TOKEN}" {
+		t.Fatalf("persisted secret reference mutated to %q", got)
+	}
+}
+
+func TestRuntimeListRejectsMissingAndMalformedEnvironmentReferences(t *testing.T) {
+	for _, value := range []string{"${PORTSCOPE_MISSING_SECRET}", "${bad-name}", "${UNCLOSED"} {
+		t.Run(value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), DefaultFilename)
+			document := Document{Version: CurrentVersion, Upstreams: []Upstream{{ID: "api", Name: "API", Protocol: "http", ListenAddr: "127.0.0.1:9000", Target: "http://localhost:3000", Enabled: true, HTTP: &HTTPOptions{RequestHeaders: []HeaderRule{{Action: "set", Name: "Authorization", Value: value, Sensitive: true}}}}}}
+			data, _ := json.Marshal(document)
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := OpenStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.RuntimeList(); err == nil {
+				t.Fatal("unsafe environment reference was accepted")
+			}
+		})
+	}
+}
+
+func TestRuntimeListRejectsEmptyRequiredPasswordAfterExpansion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), DefaultFilename)
+	document := Document{Version: CurrentVersion, Upstreams: []Upstream{{
+		ID: "database", Name: "Database", Protocol: "mysql", ListenAddr: "127.0.0.1:3307", Target: "127.0.0.1:3306", Enabled: true,
+		MySQL: &MySQLOptions{ListenerUsername: "portscope", ListenerPassword: "${PORTSCOPE_EMPTY_PASSWORD}", UpstreamUsername: "app"},
+	}}}
+	data, _ := json.Marshal(document)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PORTSCOPE_EMPTY_PASSWORD", "")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RuntimeList(); err == nil || !strings.Contains(err.Error(), "listener password is required") {
+		t.Fatalf("empty required password error = %v", err)
+	}
+}
+
+func TestOpenStoreRejectsAmbiguousOrUnsupportedDocuments(t *testing.T) {
+	validUpstream := `{"id":"api","name":"API","protocol":"http","listenAddr":"127.0.0.1:9000","target":"http://127.0.0.1:3000","enabled":false}`
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"future version", `{"version":2,"upstreams":[]}`, "unsupported configuration version"},
+		{"unknown field", `{"version":1,"upstreams":[],"surprise":true}`, "unknown field"},
+		{"invalid id", `{"version":1,"upstreams":[{"id":"not valid","name":"API","protocol":"http","listenAddr":"127.0.0.1:9000","target":"http://127.0.0.1:3000","enabled":false}]}`, "id must contain"},
+		{"duplicate id", `{"version":1,"upstreams":[` + validUpstream + `,` + validUpstream + `]}`, "duplicate id"},
+		{"trailing value", `{"version":1,"upstreams":[]} {}`, "exactly one JSON value"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), DefaultFilename)
+			if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := OpenStore(path); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("OpenStore error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
 
 func TestValidateKeepsProtocolSpecificTargetsDistinct(t *testing.T) {
 	cases := []struct {

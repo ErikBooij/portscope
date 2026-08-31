@@ -1,0 +1,5 @@
+{
+  "$schema": "https://raw.githubusercontent.com/erikbooij/portscope/main/portscope.schema.json",
+  "version": 1,
+  "upstreams": []
+}

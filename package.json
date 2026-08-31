@@ -1,8 +1,14 @@
 {
   "name": "portscope",
   "version": "0.1.0",
+  "description": "Local inspection proxy for application protocols",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
+  "repository": "github:erikbooij/portscope",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "tsc --noEmit && vite build",
