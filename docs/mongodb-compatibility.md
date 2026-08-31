@@ -23,6 +23,6 @@ After authentication, Portscope forwards original application messages rather th
 - X.509, AWS IAM, OIDC, Kerberos/GSSAPI, and LDAP/PLAIN authentication are not yet terminated.
 - Legacy CRUD opcodes removed by MongoDB 5.1 are forwarded but not semantically decoded. Current `OP_MSG` command traffic and the legacy handshake exception are decoded.
 
-Run the disposable matrix with `make test-mongo-matrix`. Each server and image is removed after its case succeeds.
+Run the disposable matrix with `make test-mongo-matrix`. Each server and image is removed after its case succeeds. The runner retries the known transient MongoDB container bootstrap failure where the initialization process has not released its listener before the final server starts; unrelated startup failures still fail immediately with their container logs.
 
 [Back to the documentation index](README.md).
