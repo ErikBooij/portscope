@@ -54,7 +54,7 @@ func TestManagementAPINeverReturnsStoredSecretsAndPreservesThemOnEdit(t *testing
 
 func TestManagementAPIRejectsCrossOriginMutationAndSetsDefensiveHeaders(t *testing.T) {
 	handler, _ := testHandler(t)
-	request := httptest.NewRequest(http.MethodPost, "/api/demo", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/upstreams", strings.NewReader(`{}`))
 	request.Header.Set("Origin", "https://attacker.example")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -63,6 +63,40 @@ func TestManagementAPIRejectsCrossOriginMutationAndSetsDefensiveHeaders(t *testi
 	}
 	if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("X-Content-Type-Options") != "nosniff" || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("missing defensive headers: %#v", response.Header())
+	}
+}
+
+func TestUnknownAPIPathDoesNotFallThroughToFrontend(t *testing.T) {
+	handler, _ := testHandler(t)
+	request := httptest.NewRequest(http.MethodGet, "/api/not-real", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("unknown API response = %d %q %q", response.Code, response.Header().Get("Content-Type"), response.Body.String())
+	}
+}
+
+func TestEmbeddedAssetsHaveLongLivedCachingButHTMLDoesNot(t *testing.T) {
+	handler, _ := testHandler(t)
+	indexResponse := httptest.NewRecorder()
+	handler.ServeHTTP(indexResponse, httptest.NewRequest(http.MethodGet, "/", nil))
+	if got := indexResponse.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("index cache control = %q", got)
+	}
+	index := indexResponse.Body.String()
+	start := strings.Index(index, `src="`)
+	if start < 0 {
+		t.Fatalf("embedded index has no script asset: %s", index)
+	}
+	start += len(`src="`)
+	end := strings.IndexByte(index[start:], '"')
+	if end < 0 {
+		t.Fatalf("embedded index has an unterminated script asset: %s", index)
+	}
+	assetResponse := httptest.NewRecorder()
+	handler.ServeHTTP(assetResponse, httptest.NewRequest(http.MethodGet, index[start:start+end], nil))
+	if got := assetResponse.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("asset cache control = %q", got)
 	}
 }
 

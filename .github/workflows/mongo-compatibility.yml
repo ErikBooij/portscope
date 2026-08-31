@@ -25,8 +25,8 @@ jobs:
         ports:
           - 27017:27017
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -45,4 +45,3 @@ jobs:
           MONGO_MATRIX_ADDR: 127.0.0.1:27017
           MONGO_MATRIX_VERSION: ${{ matrix.version }}
         run: go test -tags=mongomatrix ./internal/proxy/mongoadapter -run '^TestRealMongoCompatibility$' -count=1
-

@@ -89,13 +89,6 @@ export default function App() {
       setSelected(null);
     } catch (reason) { showError(reason); }
   }
-  async function demo() {
-    setBusy(true);
-    try {
-      await api("/api/demo", { method: "POST" });
-      window.setTimeout(() => setBusy(false), 900);
-    } catch (reason) { showError(reason); setBusy(false); }
-  }
   function showError(reason: unknown) {
     setError(reason instanceof Error ? reason.message : String(reason));
     window.setTimeout(() => setError(""), 5000);
@@ -105,7 +98,7 @@ export default function App() {
     <header className="app-header">
       <button className="brand" onClick={() => setUpstreamFilter("")}><i>⟲</i><span>PORTSCOPE<small>INSPECTION PROXY</small></span></button>
       <div className="live-status"><i className={connected ? "online" : ""}/><span>{connected ? "LIVE CAPTURE CONNECTED" : "RECONNECTING"}</span></div>
-      <div className="header-actions"><button onClick={demo} disabled={busy}>Generate traffic</button><button className="primary" onClick={() => setEditor(structuredClone(emptyUpstream))}>＋ Add upstream</button></div>
+      <div className="header-actions"><button className="primary" onClick={() => setEditor(structuredClone(emptyUpstream))}>＋ Add upstream</button></div>
     </header>
     <section className="layout">
       <aside className="sidebar">
@@ -139,7 +132,7 @@ export default function App() {
             <span className="row-upstream"><i className={`protocol ${item.protocol}`}>{protocolGlyph(item.protocol)}</i>{upstreams.find(value => value.id === item.upstreamId)?.name ?? item.upstreamId}</span>
             <b>{item.operation}</b><span className={`outcome ${item.outcome}`}>{resultLabel(item)}</span><span>{duration(item.durationUs)}</span><span>{bytes(item.request.size + item.response.size)}</span>
           </button>)}
-          {interactions.length === 0 && <Empty onDemo={demo} hasDemo={upstreams.some(item => item.id === "demo-http" && item.enabled)}/>}
+          {interactions.length === 0 && <Empty/>}
         </div>
       </section>
       <aside className={`inspector ${active ? "open" : ""}`}>{active ? <Inspector item={active} upstream={upstreams.find(item => item.id === active.upstreamId)} onClose={() => setSelected(null)}/> : <div className="no-selection"><span>↖</span><b>Select an interaction</b><p>Requests and responses appear here without leaving the live stream.</p></div>}</aside>
@@ -159,8 +152,8 @@ function PayloadView({ title, payload }: { title: string; payload: Payload }) {
   return <section className="payload"><div><h3>{title}</h3><span>{payload.kind} · {bytes(payload.size)}{payload.truncated ? " · truncated" : ""}</span><button onClick={() => void navigator.clipboard.writeText(text)}>COPY</button></div>{payload.headers && payload.headers.length > 0 && <details><summary>HEADERS · {payload.headers.length}</summary>{payload.headers.map(header => <p key={header.name}><b>{header.name}</b><span>{header.value}</span></p>)}</details>}<pre>{text}</pre></section>;
 }
 
-function Empty({ onDemo, hasDemo }: { onDemo: () => void; hasDemo: boolean }) {
-  return <div className="empty"><div className="empty-graphic"><i/><i/><i/></div><b>Waiting at the wire.</b><p>Traffic appears here the instant a configured proxy sees a complete interaction.</p>{hasDemo && <button onClick={onDemo}>Send three real requests through Echo Lab →</button>}</div>;
+function Empty() {
+  return <div className="empty"><div className="empty-graphic"><i/><i/><i/></div><b>Waiting at the wire.</b><p>Traffic appears here the instant a configured proxy sees a complete interaction.</p></div>;
 }
 
 function UpstreamEditor({ value, busy, onSave, onDelete, onClose }: { value: Upstream; busy: boolean; onSave: (item: Upstream) => void; onDelete?: () => void; onClose: () => void }) {

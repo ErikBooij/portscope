@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/erikbooij/portscope/main/portscope.schema.json",
+  "title": "Portscope project configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "upstreams"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "upstreams": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/upstream" }
+    }
+  },
+  "$defs": {
+    "clientTls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serverName": { "type": "string" },
+        "caFile": { "type": "string" },
+        "certFile": { "type": "string" },
+        "keyFile": { "type": "string" },
+        "insecureSkipVerify": { "type": "boolean" }
+      }
+    },
+    "listenerTls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "certFile": { "type": "string" },
+        "keyFile": { "type": "string" },
+        "clientCaFile": { "type": "string" },
+        "requireClientCert": { "type": "boolean" }
+      }
+    },
+    "headerRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "name"],
+      "properties": {
+        "action": { "enum": ["set", "add", "remove"] },
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "type": "string" },
+        "sensitive": { "type": "boolean" }
+      }
+    },
+    "http": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preserveHost": { "type": "boolean" },
+        "requestHeaders": { "type": "array", "items": { "$ref": "#/$defs/headerRule" } },
+        "responseHeaders": { "type": "array", "items": { "$ref": "#/$defs/headerRule" } },
+        "upstreamTls": { "$ref": "#/$defs/clientTls" }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listenerUsername": { "type": "string" },
+        "listenerPassword": { "type": "string" },
+        "upstreamUsername": { "type": "string" },
+        "upstreamPassword": { "type": "string" },
+        "database": { "type": "integer", "minimum": 0 },
+        "upstreamTls": { "$ref": "#/$defs/clientTls" }
+      }
+    },
+    "mysql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listenerUsername", "listenerPassword", "upstreamUsername"],
+      "properties": {
+        "listenerUsername": { "type": "string", "minLength": 1 },
+        "listenerPassword": { "type": "string", "minLength": 1 },
+        "upstreamUsername": { "type": "string", "minLength": 1 },
+        "upstreamPassword": { "type": "string" },
+        "database": { "type": "string" },
+        "upstreamTls": { "$ref": "#/$defs/clientTls" }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listenerUsername", "listenerPassword", "upstreamUsername", "database"],
+      "properties": {
+        "listenerUsername": { "type": "string", "minLength": 1 },
+        "listenerPassword": { "type": "string", "minLength": 1 },
+        "upstreamUsername": { "type": "string", "minLength": 1 },
+        "upstreamPassword": { "type": "string" },
+        "database": { "type": "string", "minLength": 1 },
+        "upstreamTls": { "$ref": "#/$defs/clientTls" }
+      }
+    },
+    "mongodb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listenerUsername": { "type": "string" },
+        "listenerPassword": { "type": "string" },
+        "listenerAuthSource": { "type": "string" },
+        "upstreamUsername": { "type": "string" },
+        "upstreamPassword": { "type": "string" },
+        "upstreamAuthSource": { "type": "string" },
+        "authMechanism": { "enum": ["", "SCRAM-SHA-256", "SCRAM-SHA-1"] },
+        "upstreamTls": { "$ref": "#/$defs/clientTls" }
+      }
+    },
+    "rabbitmq": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listenerUsername", "listenerPassword", "listenerVhost", "upstreamUsername", "upstreamPassword", "upstreamVhost"],
+      "properties": {
+        "listenerUsername": { "type": "string", "minLength": 1 },
+        "listenerPassword": { "type": "string", "minLength": 1 },
+        "listenerVhost": { "type": "string", "minLength": 1 },
+        "upstreamUsername": { "type": "string", "minLength": 1 },
+        "upstreamPassword": { "type": "string" },
+        "upstreamVhost": { "type": "string", "minLength": 1 },
+        "upstreamTls": { "$ref": "#/$defs/clientTls" }
+      }
+    },
+    "grpc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "descriptorSetFile": { "type": "string" }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "protocol", "listenAddr", "target", "enabled"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9._-]+$" },
+        "name": { "type": "string", "minLength": 1 },
+        "protocol": { "enum": ["http", "elasticsearch", "grpc", "redis", "mysql", "postgres", "mongodb", "rabbitmq"] },
+        "listenAddr": { "type": "string", "minLength": 3 },
+        "target": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" },
+        "listenerTls": { "$ref": "#/$defs/listenerTls" },
+        "http": { "$ref": "#/$defs/http" },
+        "redis": { "$ref": "#/$defs/redis" },
+        "mysql": { "$ref": "#/$defs/mysql" },
+        "postgres": { "$ref": "#/$defs/postgres" },
+        "mongodb": { "$ref": "#/$defs/mongodb" },
+        "rabbitmq": { "$ref": "#/$defs/rabbitmq" },
+        "grpc": { "$ref": "#/$defs/grpc" }
+      },
+      "allOf": [
+        { "if": { "properties": { "protocol": { "const": "grpc" } } }, "then": { "required": ["grpc"] } },
+        { "if": { "properties": { "protocol": { "const": "mysql" } } }, "then": { "required": ["mysql"] } },
+        { "if": { "properties": { "protocol": { "const": "postgres" } } }, "then": { "required": ["postgres"] } },
+        { "if": { "properties": { "protocol": { "const": "mongodb" } } }, "then": { "required": ["mongodb"] } },
+        { "if": { "properties": { "protocol": { "const": "rabbitmq" } } }, "then": { "required": ["rabbitmq"] } }
+      ]
+    }
+  }
+}

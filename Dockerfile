@@ -6,19 +6,24 @@ COPY index.html tsconfig.json vite.config.ts ./
 COPY web ./web
 RUN npm run build
 
-FROM golang:1.26-alpine AS backend
+FROM golang:1.26.6-alpine AS backend
 WORKDIR /src
-COPY go.mod ./
-COPY cmd ./cmd
+COPY go.mod go.sum ./
+RUN go mod download
+COPY main.go ./
 COPY internal ./internal
 COPY --from=web /src/internal/webui/dist ./internal/webui/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /portscope ./cmd/portscope
+ARG VERSION=dev
+ARG COMMIT=
+ARG BUILD_DATE=
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/erikbooij/portscope/internal/buildinfo.Version=${VERSION} -X github.com/erikbooij/portscope/internal/buildinfo.Commit=${COMMIT} -X github.com/erikbooij/portscope/internal/buildinfo.Date=${BUILD_DATE}" -o /portscope .
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates && adduser -D -u 10001 portscope
 USER portscope
 WORKDIR /app
 COPY --from=backend /portscope /usr/local/bin/portscope
-VOLUME ["/app/data"]
-EXPOSE 8090 9081
-ENTRYPOINT ["portscope", "--addr", "0.0.0.0:8090", "--data", "/app/data"]
+VOLUME ["/app/.portscope"]
+EXPOSE 8090
+ENTRYPOINT ["portscope"]
+CMD ["--addr", "0.0.0.0:8090"]
