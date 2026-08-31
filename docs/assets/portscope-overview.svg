@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" role="img" aria-labelledby="title desc">
+  <title id="title">Portscope inspection flow</title>
+  <desc id="desc">Application traffic flows into Portscope protocol-aware listeners, appears as live inspected events, and continues to HTTP, Redis, SQL, gRPC, search, MongoDB, and RabbitMQ upstreams.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b100f"/>
+      <stop offset="1" stop-color="#121917"/>
+    </linearGradient>
+    <linearGradient id="scope" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#18201c"/>
+      <stop offset="1" stop-color="#101513"/>
+    </linearGradient>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c8ff3d"/>
+    </marker>
+    <style>
+      .sans { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+      .label { fill: #77817d; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
+      .title { fill: #edf2eb; font-size: 23px; font-weight: 700; }
+      .small { fill: #aab3ae; font-size: 13px; }
+      .event { fill: #dce4df; font-size: 12px; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="460" rx="18" fill="url(#background)"/>
+  <rect x="1" y="1" width="1198" height="458" rx="17" fill="none" stroke="#28312e" stroke-width="2"/>
+  <path d="M 0 76 H 1200" stroke="#1d2623"/>
+  <circle cx="32" cy="38" r="5" fill="#ff6848"/>
+  <circle cx="52" cy="38" r="5" fill="#f8ca56"/>
+  <circle cx="72" cy="38" r="5" fill="#c8ff3d"/>
+  <text x="102" y="44" class="mono label" fill="#c8ff3d">PORTSCOPE / LIVE TRAFFIC</text>
+  <text x="1165" y="44" text-anchor="end" class="mono small">127.0.0.1:8090</text>
+
+  <g transform="translate(36 111)">
+    <text x="0" y="0" class="mono label">YOUR APPLICATION</text>
+    <rect x="0" y="25" width="225" height="280" rx="12" fill="#0e1412" stroke="#303a36" stroke-width="2"/>
+    <rect x="24" y="52" width="177" height="42" rx="7" fill="#161d1a"/>
+    <circle cx="45" cy="73" r="6" fill="#65d8d1"/>
+    <text x="62" y="78" class="mono event">GET /api/orders</text>
+    <rect x="24" y="106" width="177" height="42" rx="7" fill="#161d1a"/>
+    <circle cx="45" cy="127" r="6" fill="#ff6848"/>
+    <text x="62" y="132" class="mono event">GET cart:8472</text>
+    <rect x="24" y="160" width="177" height="42" rx="7" fill="#161d1a"/>
+    <circle cx="45" cy="181" r="6" fill="#77a8ff"/>
+    <text x="62" y="186" class="mono event">SELECT orders</text>
+    <rect x="24" y="214" width="177" height="42" rx="7" fill="#161d1a"/>
+    <circle cx="45" cy="235" r="6" fill="#a990ff"/>
+    <text x="62" y="240" class="mono event">Publish event</text>
+    <text x="112" y="283" text-anchor="middle" class="sans small">Connect to local proxy ports</text>
+  </g>
+
+  <path d="M 278 252 H 347" stroke="#c8ff3d" stroke-width="2" marker-end="url(#arrow)" filter="url(#glow)"/>
+  <text x="312" y="235" text-anchor="middle" class="mono label">TRAFFIC</text>
+
+  <g transform="translate(365 100)">
+    <rect x="0" y="0" width="470" height="325" rx="14" fill="url(#scope)" stroke="#c8ff3d" stroke-width="2"/>
+    <text x="28" y="40" class="mono label" fill="#c8ff3d">PROTOCOL-AWARE INSPECTION</text>
+    <text x="28" y="75" class="sans title">Requests, results, errors, timing.</text>
+
+    <g transform="translate(28 103)">
+      <rect width="414" height="48" rx="7" fill="#0c1210" stroke="#25302c"/>
+      <rect width="4" height="48" rx="2" fill="#65d8d1"/>
+      <text x="20" y="20" class="mono event">HTTP · GET /api/orders</text>
+      <text x="20" y="38" class="mono small">200 OK · 18.4 KB</text>
+      <text x="392" y="29" text-anchor="end" class="mono event" fill="#c8ff3d">21 ms</text>
+    </g>
+    <g transform="translate(28 161)">
+      <rect width="414" height="48" rx="7" fill="#0c1210" stroke="#25302c"/>
+      <rect width="4" height="48" rx="2" fill="#ff6848"/>
+      <text x="20" y="20" class="mono event">REDIS · GET cart:8472</text>
+      <text x="20" y="38" class="mono small">bulk string · 184 B</text>
+      <text x="392" y="29" text-anchor="end" class="mono event" fill="#c8ff3d">0.7 ms</text>
+    </g>
+    <g transform="translate(28 219)">
+      <rect width="414" height="48" rx="7" fill="#0c1210" stroke="#25302c"/>
+      <rect width="4" height="48" rx="2" fill="#77a8ff"/>
+      <text x="20" y="20" class="mono event">POSTGRES · SELECT orders</text>
+      <text x="20" y="38" class="mono small">12 rows · complete</text>
+      <text x="392" y="29" text-anchor="end" class="mono event" fill="#c8ff3d">4.2 ms</text>
+    </g>
+    <text x="28" y="300" class="mono small">LIVE CAPTURE</text>
+    <circle cx="135" cy="296" r="5" fill="#c8ff3d" filter="url(#glow)"/>
+    <text x="150" y="300" class="mono small">forwarding without blocking</text>
+  </g>
+
+  <path d="M 853 252 H 922" stroke="#c8ff3d" stroke-width="2" marker-end="url(#arrow)" filter="url(#glow)"/>
+  <text x="887" y="235" text-anchor="middle" class="mono label">PROXY</text>
+
+  <g transform="translate(940 111)">
+    <text x="0" y="0" class="mono label">YOUR UPSTREAMS</text>
+    <rect x="0" y="25" width="224" height="280" rx="12" fill="#0e1412" stroke="#303a36" stroke-width="2"/>
+    <g class="mono event">
+      <rect x="20" y="47" width="88" height="42" rx="7" fill="#15211e" stroke="#28413b"/>
+      <text x="64" y="73" text-anchor="middle">HTTP / WS</text>
+      <rect x="116" y="47" width="88" height="42" rx="7" fill="#211815" stroke="#4a2b25"/>
+      <text x="160" y="73" text-anchor="middle">REDIS</text>
+      <rect x="20" y="99" width="88" height="42" rx="7" fill="#151c25" stroke="#263a53"/>
+      <text x="64" y="125" text-anchor="middle">SQL</text>
+      <rect x="116" y="99" width="88" height="42" rx="7" fill="#1c1827" stroke="#3d3155"/>
+      <text x="160" y="125" text-anchor="middle">gRPC</text>
+      <rect x="20" y="151" width="88" height="42" rx="7" fill="#211f13" stroke="#4a4525"/>
+      <text x="64" y="177" text-anchor="middle">SEARCH</text>
+      <rect x="116" y="151" width="88" height="42" rx="7" fill="#132219" stroke="#285037"/>
+      <text x="160" y="177" text-anchor="middle">MONGO</text>
+      <rect x="20" y="203" width="184" height="42" rx="7" fill="#211819" stroke="#4a292c"/>
+      <text x="112" y="229" text-anchor="middle">RABBITMQ</text>
+    </g>
+    <text x="112" y="277" text-anchor="middle" class="sans small">Independent upstream sessions</text>
+  </g>
+</svg>

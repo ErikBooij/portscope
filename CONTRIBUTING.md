@@ -1,10 +1,10 @@
 # Contributing to Portscope
 
-Portscope keeps a deliberately small runtime seam: every protocol adapter implements `proxy.Adapter.Run`, while framing, session state, authentication, redaction, and correlation remain inside that adapter. Read `docs/architecture.md` and the relevant compatibility contract before changing protocol behavior.
+Portscope keeps a deliberately small runtime seam: every protocol adapter implements `proxy.Adapter.Run`, while framing, session state, authentication, redaction, and correlation remain inside that adapter. Read [the architecture guide](docs/architecture.md) and the relevant [compatibility contract](docs/README.md#compatibility-contracts) before changing protocol behavior.
 
 ## Development
 
-Requirements are Go 1.26.6 or newer and Node.js 24 or newer.
+Requirements are Go 1.26.6 or newer and Node.js 24 or newer. The full command and matrix-test reference lives in the [development guide](docs/development.md).
 
 ```bash
 npm ci

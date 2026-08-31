@@ -27,3 +27,5 @@ Capture remains bounded at the HTTP adapter's 256 KiB limit. NDJSON decoding rec
 ## Explicit limits
 
 Product plugins and newly introduced REST endpoints fall back to `ELASTIC <METHOD>` while retaining their path, status, headers, and payloads. JSON and NDJSON receive semantic decoding; YAML remains text, while CBOR and SMILE remain binary captures. AWS SigV4 signing is not performed by Portscope, though already signed requests and injected authorization headers are forwarded unchanged.
+
+[Back to the documentation index](README.md).
