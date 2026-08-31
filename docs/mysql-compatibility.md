@@ -31,3 +31,5 @@ The default matrix follows the moving minor tags (`5.6`, `5.7`, `8.0`, `8.4`, `9
 ## Deliberate protocol exclusions
 
 Server-version compatibility does not mean every optional classic-protocol extension is enabled. Compression, Zstandard compression, query attributes, optional resultset metadata, connection attributes, and `LOCAL INFILE` are not negotiated. `COM_CHANGE_USER` and replication commands are rejected because they would replace the independently owned upstream session. These exclusions are explicit capability choices and apply consistently across versions; ordinary SQL, prepared statements, transactions, multiple results, and TLS/authentication are supported.
+
+[Back to the documentation index](README.md).

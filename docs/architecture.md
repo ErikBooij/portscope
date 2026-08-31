@@ -47,3 +47,5 @@ The gRPC profile attaches incrementally to the HTTP request and response streams
 Classic WebSockets are an internal seam within the HTTP adapter rather than a new runtime adapter. The upgrade retains HTTP header policy and TLS behavior, then the adapter hijacks the two HTTP/1.1 connections and streams RFC 6455 frames byte-for-byte. Inspection unmasks only the bounded capture copy; bytes forwarded to the upstream are never rewritten. Handshake and frame observations use the same shared envelope with a `websocket` protocol vocabulary and stable connection identity.
 
 Capture limits are independent of forwarding limits, so a large body remains functional while its observation is marked truncated. HTTP mutation validation rejects framing and hop-by-hop headers as well as CR/LF injection. Redis protocol frame limits defend memory use. New adapters must define credential-redaction policy, framing limits, and startup-handshake semantics before registration.
+
+[Back to the documentation index](README.md).

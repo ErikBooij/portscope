@@ -46,3 +46,5 @@ Capture is bounded: query text stops at 256 KiB, individual parameter and cell p
 - Semantic decoding of PostgreSQL type OIDs. Text values remain text; binary values remain bounded hexadecimal captures so the inspector never invents an incorrect value.
 
 Unsupported authentication methods fail closed before application traffic is accepted. Protocol v3 minor versions newer than Portscope's implemented minor version are explicitly negotiated down to 3.0 rather than silently claimed.
+
+[Back to the documentation index](README.md).

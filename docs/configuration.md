@@ -67,3 +67,5 @@ An unset variable, malformed reference, or invalid variable name stops startup w
 ```
 
 Legacy pre-release configuration files containing a top-level upstream array are still accepted. The next web-interface edit rewrites them as a version 1 document. Unknown document versions are rejected instead of being guessed.
+
+[Back to the documentation index](README.md).

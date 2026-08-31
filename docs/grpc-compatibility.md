@@ -29,3 +29,5 @@ The descriptor set is loaded and linked before the proxy listener becomes ready 
 - A descriptor set is static for the lifetime of a listener. Updating its path or reapplying the upstream restarts that listener and reloads the schema.
 - Unknown fields remain subject to normal protobuf JSON behavior. Corrupt, truncated, or schema-mismatched payloads are reported as decode errors without changing forwarded bytes.
 - Header policies can inject or remove metadata, but HTTP/2 framing and hop-by-hop headers remain transport-owned and cannot be mutated.
+
+[Back to the documentation index](README.md).

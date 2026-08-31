@@ -23,3 +23,5 @@ Portscope currently terminates the PLAIN SASL mechanism. AMQPLAIN, EXTERNAL, SCR
 ## Scope
 
 This adapter is for AMQP 0-9-1. AMQP 1.0, RabbitMQ Streams, MQTT, STOMP, and Web STOMP are distinct protocols and are not accepted on this listener. Heartbeats are forwarded and validated but not persisted as interactions. Unknown well-formed AMQP methods and field values continue forwarding; they remain generic observations rather than being guessed.
+
+[Back to the documentation index](README.md).
