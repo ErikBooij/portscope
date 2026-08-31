@@ -30,6 +30,130 @@ type testSink struct{ events chan observation.Interaction }
 
 func (sink testSink) Record(item observation.Interaction) { sink.events <- item }
 
+type callbackWriteConn struct {
+	net.Conn
+	onWrite func()
+}
+
+func (connection callbackWriteConn) Write(payload []byte) (int, error) {
+	if connection.onWrite != nil {
+		connection.onWrite()
+	}
+	return len(payload), nil
+}
+
+type afterWriteConn struct {
+	net.Conn
+	afterWrite func()
+}
+
+func (connection afterWriteConn) Write(payload []byte) (int, error) {
+	written, err := connection.Conn.Write(payload)
+	if err == nil && connection.afterWrite != nil {
+		connection.afterWrite()
+	}
+	return written, err
+}
+
+func TestRelayObservesRequestBeforeUpstreamCanReply(t *testing.T) {
+	events := make(chan observation.Interaction, 10)
+	inspector := newAMQPInspector(rabbitTestUpstream("unused"), testSink{events}, "test", negotiatedConnection{})
+	request := methodFrame(1, 90, 30, nil)
+	response := methodFrame(1, 90, 31, nil)
+	source, application := net.Pipe()
+	result := make(chan error, 1)
+	go relayAMQP(source, callbackWriteConn{onWrite: func() {
+		// A local broker can reply before Write returns to the client relay.
+		inspector.observe(serverToClient, response)
+	}}, 0, clientToServer, inspector, result)
+
+	if err := writeAll(application, request.raw); err != nil {
+		t.Fatal(err)
+	}
+	_ = application.Close()
+	relayErr := <-result
+	inspector.failPending(relayErr)
+
+	rollback := waitForAMQPOperations(t, events, "TX ROLLBACK")["TX ROLLBACK"]
+	if rollback.Outcome != "ok" || rollback.Response.Summary != "tx.rollback-ok" {
+		t.Fatalf("rollback observation = %#v", rollback)
+	}
+}
+
+func TestRelayCompletesResponseBeforeDownstreamCanClose(t *testing.T) {
+	events := make(chan observation.Interaction, 10)
+	inspector := newAMQPInspector(rabbitTestUpstream("unused"), testSink{events}, "test", negotiatedConnection{})
+	var requestArguments bytes.Buffer
+	_ = binary.Write(&requestArguments, binary.BigEndian, uint16(0))
+	_ = writeShortstr(&requestArguments, "books")
+	requestArguments.WriteByte(1)
+	request := methodFrame(1, 60, 70, requestArguments.Bytes())
+
+	body := []byte(`{"title":"The Dispossessed"}`)
+	var responseArguments bytes.Buffer
+	_ = binary.Write(&responseArguments, binary.BigEndian, uint64(1))
+	responseArguments.WriteByte(0)
+	_ = writeShortstr(&responseArguments, "")
+	_ = writeShortstr(&responseArguments, "books")
+	_ = binary.Write(&responseArguments, binary.BigEndian, uint32(0))
+	frames := []amqpFrame{
+		methodFrame(1, 60, 71, responseArguments.Bytes()),
+		testContentHeader(1, body),
+		makeFrame(frameBody, 1, body),
+	}
+
+	writes := 0
+	applicationClosed := make(chan struct{})
+	proxyDownstream, application := net.Pipe()
+	proxyUpstream, broker := net.Pipe()
+	result := make(chan error, 1)
+	downstream := afterWriteConn{Conn: proxyDownstream, afterWrite: func() {
+		writes++
+		if writes == len(frames) {
+			// Keep the response relay between forwarding and observation until the
+			// application has closed and the request relay has seen that EOF.
+			<-applicationClosed
+		}
+	}}
+	go func() {
+		result <- relayAMQPConnection(context.Background(), downstream, proxyUpstream, 0, inspector)
+	}()
+	brokerDone := make(chan error, 1)
+	go func() {
+		if _, err := readFrame(broker, 0); err != nil {
+			brokerDone <- err
+			return
+		}
+		for _, frame := range frames {
+			if err := writeAll(broker, frame.raw); err != nil {
+				brokerDone <- err
+				return
+			}
+		}
+		brokerDone <- nil
+	}()
+	if err := writeAll(application, request.raw); err != nil {
+		t.Fatal(err)
+	}
+	for range frames {
+		if _, err := readFrame(application, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = application.Close()
+	close(applicationClosed)
+	if err := <-brokerDone; err != nil {
+		t.Fatal(err)
+	}
+	_ = broker.Close()
+	<-result
+
+	get := waitForAMQPOperations(t, events, "GET books")["GET books"]
+	if get.Outcome != "ok" || get.Response.Kind != "json" || string(get.Response.JSON) != string(body) {
+		t.Fatalf("get observation = %#v", get)
+	}
+}
+
 func TestProxyTerminatesPlainAndInspectsMessaging(t *testing.T) {
 	brokerAddress, starts, stopBroker := startFakeBroker(t)
 	defer stopBroker()

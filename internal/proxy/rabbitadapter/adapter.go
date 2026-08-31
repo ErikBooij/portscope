@@ -67,16 +67,33 @@ func (adapter *Adapter) handleConnection(ctx context.Context, upstream config.Up
 	defer negotiated.upstream.Close()
 	recordAMQPConnect(sink, upstream, connection, started, negotiated, nil)
 	inspector := newAMQPInspector(upstream, sink, connection, negotiated)
+	return relayAMQPConnection(ctx, downstream, negotiated.upstream, negotiated.frameMax, inspector)
+}
+
+func relayAMQPConnection(ctx context.Context, downstream, upstream net.Conn, frameMax uint32, inspector *amqpInspector) error {
 	errorsChannel := make(chan error, 2)
-	go relayAMQP(downstream, negotiated.upstream, negotiated.frameMax, clientToServer, inspector, errorsChannel)
-	go relayAMQP(negotiated.upstream, downstream, negotiated.frameMax, serverToClient, inspector, errorsChannel)
+	var relays sync.WaitGroup
+	relays.Add(2)
+	go func() {
+		defer relays.Done()
+		relayAMQP(downstream, upstream, frameMax, clientToServer, inspector, errorsChannel)
+	}()
+	go func() {
+		defer relays.Done()
+		relayAMQP(upstream, downstream, frameMax, serverToClient, inspector, errorsChannel)
+	}()
+	var err error
 	select {
 	case err = <-errorsChannel:
 	case <-ctx.Done():
 		err = ctx.Err()
 	}
 	_ = downstream.Close()
-	_ = negotiated.upstream.Close()
+	_ = upstream.Close()
+	// A peer can close immediately after consuming a response. Let both relays
+	// finish observing any frame whose write already succeeded before pending
+	// requests are failed for the connection shutdown.
+	relays.Wait()
 	inspector.failPending(err)
 	return err
 }
@@ -96,11 +113,14 @@ func relayAMQP(source net.Conn, target net.Conn, frameMax uint32, direction amqp
 				return
 			}
 		}
+		prepared := direction == clientToServer && inspector.prepareRequest(frame)
 		if err := writeAll(target, frame.raw); err != nil {
 			result <- err
 			return
 		}
-		inspector.observe(direction, frame)
+		if !prepared {
+			inspector.observe(direction, frame)
+		}
 	}
 }
 

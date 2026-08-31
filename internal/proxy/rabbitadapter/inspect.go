@@ -75,6 +75,21 @@ func newAMQPInspector(upstream config.Upstream, sink observation.Sink, connectio
 	return &amqpInspector{upstream: upstream, sink: sink, connection: connection, context: context, pending: make(map[uint16][]methodEvent), content: make(map[contentKey]*contentState)}
 }
 
+func (inspector *amqpInspector) prepareRequest(frame amqpFrame) bool {
+	if frame.typeID != frameMethod {
+		return false
+	}
+	info := inspectMethod(frame)
+	if info.expectedClass == 0 || boolArgument(info.arguments, "noWait") {
+		return false
+	}
+	event := methodEvent{frame: frame, info: info, started: time.Now()}
+	inspector.mu.Lock()
+	inspector.pending[frame.channel] = append(inspector.pending[frame.channel], event)
+	inspector.mu.Unlock()
+	return true
+}
+
 func (inspector *amqpInspector) observe(direction amqpDirection, frame amqpFrame) {
 	if frame.typeID == frameHeartbeat {
 		return
