@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 versions=("$@")
 if [[ $# -eq 0 ]]; then
   versions=(14 15 16 17 18)
@@ -20,6 +22,7 @@ trap cleanup EXIT INT TERM
 for version in "${versions[@]}"; do
   current_container="portscope-postgres-${version}-$$"
   echo "Testing PostgreSQL ${version}"
+  "$script_dir/docker-pull-retry.sh" "postgres:${version}"
   docker run -d --name "$current_container" \
     -e POSTGRES_PASSWORD="$matrix_password" \
     -e POSTGRES_DB="$matrix_database" \

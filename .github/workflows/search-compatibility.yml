@@ -43,6 +43,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Pull search server image
+        env:
+          SEARCH_IMAGE: ${{ matrix.image }}
+        run: ./scripts/docker-pull-retry.sh "$SEARCH_IMAGE"
       - name: Start search server
         env:
           SEARCH_IMAGE: ${{ matrix.image }}

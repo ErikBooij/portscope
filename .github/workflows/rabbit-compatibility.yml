@@ -21,33 +21,11 @@ jobs:
       fail-fast: false
       matrix:
         version: ["3.13.7", "4.0.9", "4.1.8", "4.2.9", "4.3.5"]
-    services:
-      rabbitmq:
-        image: rabbitmq:${{ matrix.version }}
-        env:
-          RABBITMQ_DEFAULT_USER: portscope_upstream
-          RABBITMQ_DEFAULT_PASS: upstream-secret
-          RABBITMQ_DEFAULT_VHOST: /portscope
-        ports:
-          - 5672:5672
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-      - name: Wait for RabbitMQ
-        run: |
-          for _ in $(seq 1 90); do
-            if docker exec --user rabbitmq ${{ job.services.rabbitmq.id }} rabbitmq-diagnostics -q check_protocol_listener amqp >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs ${{ job.services.rabbitmq.id }}
-          exit 1
       - name: Exercise Portscope AMQP 0-9-1 termination
-        env:
-          RABBIT_MATRIX_ADDR: 127.0.0.1:5672
-          RABBIT_MATRIX_VERSION: ${{ matrix.version }}
-        run: go test -tags=rabbitmatrix ./internal/proxy/rabbitadapter -run '^TestRealRabbitMQCompatibility$' -count=1
+        run: ./scripts/test-rabbit-matrix.sh "${{ matrix.version }}"

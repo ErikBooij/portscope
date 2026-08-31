@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-versions=(3.13.7 4.0.9 4.1.8 4.2.9 4.3.5)
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+versions=("$@")
+if [[ $# -eq 0 ]]; then
+  versions=(3.13.7 4.0.9 4.1.8 4.2.9 4.3.5)
+fi
 for version in "${versions[@]}"; do
   name="portscope-rabbit-${version//./-}-${RANDOM}"
+  "$script_dir/docker-pull-retry.sh" "rabbitmq:${version}"
   docker run -d --rm --name "$name" \
     -e RABBITMQ_DEFAULT_USER=portscope_upstream \
     -e RABBITMQ_DEFAULT_PASS=upstream-secret \
