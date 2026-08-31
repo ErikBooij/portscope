@@ -390,7 +390,7 @@ func TestUpstreamTLSUpgradeVerifiesCertificate(t *testing.T) {
 			serverDone <- errUnexpected("proxy did not send a valid MySQL SSLRequest")
 			return
 		}
-		secure := tls.Server(connection, serverTLS)
+		secure := tls.Server(&bufferedConn{Conn: connection, reader: reader}, serverTLS)
 		if err := secure.Handshake(); err != nil {
 			serverDone <- err
 			return
