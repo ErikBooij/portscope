@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 matrix=(
   "elasticsearch|8.19.20|docker.elastic.co/elasticsearch/elasticsearch:8.19.20"
   "elasticsearch|9.5.2|docker.elastic.co/elasticsearch/elasticsearch:9.5.2"
@@ -26,6 +28,7 @@ for entry in "${matrix[@]}"; do
   else
     product_options+=("-e" "DISABLE_SECURITY_PLUGIN=true")
   fi
+  "$script_dir/docker-pull-retry.sh" "$image"
   docker run -d --name "$current_container" \
     -e discovery.type=single-node \
     -e cluster.routing.allocation.disk.threshold_enabled=false \

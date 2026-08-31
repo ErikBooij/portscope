@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 matrix=("6.0.28" "7.0.40" "8.0.29" "8.3.8")
 if [[ -n "${MONGO_MATRIX_VERSIONS:-}" ]]; then
   read -r -a matrix <<<"$MONGO_MATRIX_VERSIONS"
@@ -18,6 +20,7 @@ for version in "${matrix[@]}"; do
   image="mongo:${version}"
   current_container="portscope-mongo-${version//./-}-$$"
   echo "Testing MongoDB ${version}"
+  "$script_dir/docker-pull-retry.sh" "$image"
   ready=false
   for attempt in 1 2 3; do
     docker run -d --name "$current_container" \

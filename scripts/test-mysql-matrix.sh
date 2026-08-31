@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 versions=("$@")
 if [[ $# -eq 0 ]]; then
   versions=(5.6 5.7 8.0 8.4 9.7 26.7)
@@ -26,6 +28,7 @@ for version in "${versions[@]}"; do
   fi
 
   echo "Testing MySQL ${version}"
+  "$script_dir/docker-pull-retry.sh" "mysql:${version}"
   docker run -d --name "$current_container" "${platform_args[@]}" \
     -e MYSQL_ROOT_PASSWORD="$matrix_password" \
     -e MYSQL_ROOT_HOST=% \

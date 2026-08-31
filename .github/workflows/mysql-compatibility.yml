@@ -21,20 +21,6 @@ jobs:
       fail-fast: false
       matrix:
         mysql: ["5.6", "5.7", "8.0", "8.4", "9.7", "26.7"]
-    services:
-      mysql:
-        image: mysql:${{ matrix.mysql }}
-        env:
-          MYSQL_ROOT_PASSWORD: portscope-matrix-secret
-          MYSQL_ROOT_HOST: "%"
-          MYSQL_DATABASE: portscope_compat
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h127.0.0.1 -uroot -pportscope-matrix-secret --silent"
-          --health-interval=2s
-          --health-timeout=5s
-          --health-retries=90
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -42,9 +28,4 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Exercise Portscope against MySQL ${{ matrix.mysql }}
-        env:
-          MYSQL_MATRIX_ADDR: 127.0.0.1:3306
-          MYSQL_MATRIX_PASSWORD: portscope-matrix-secret
-          MYSQL_MATRIX_DATABASE: portscope_compat
-          MYSQL_MATRIX_VERSION: ${{ matrix.mysql }}
-        run: go test -tags=mysqlmatrix ./internal/proxy/mysqladapter -run '^TestRealMySQLCompatibility$' -count=1
+        run: ./scripts/test-mysql-matrix.sh "${{ matrix.mysql }}"
