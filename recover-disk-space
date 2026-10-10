@@ -1,0 +1,16 @@
+#!/bin/sh
+# control: recover-disk-space v1
+#
+# Deletes portscope's recreatable files to recover disk space.
+# Restore with: npm install && make build
+set -eu
+cd "$(dirname "$0")"
+recipes="${CONTROL_RECIPES:-$HOME/Library/Application Support/Control/Recipes}"
+
+"$recipes/node-modules"
+
+# make build
+if [ -e portscope ] || [ -L portscope ]; then
+    rm -rf -- portscope
+    printf '%s\n' 'Removed portscope'
+fi
