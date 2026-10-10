@@ -6,7 +6,7 @@ require github.com/go-sql-driver/mysql v1.10.0
 
 require (
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/rabbitmq/amqp091-go v1.13.0
+	github.com/rabbitmq/amqp091-go v1.14.0
 	go.mongodb.org/mongo-driver/v2 v2.8.2
 	golang.org/x/text v0.41.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa
