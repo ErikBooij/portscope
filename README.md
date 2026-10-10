@@ -34,7 +34,7 @@ browser. Configuration lives with the project; captured traffic does not.
 ## Get started
 
 Install a binary from [GitHub Releases](https://github.com/ErikBooij/portscope/releases)
-or install from source with Go 1.26.6 or newer:
+or install from source with Go 1.26.9 or newer:
 
 ```bash
 go install github.com/erikbooij/portscope@latest

@@ -6,7 +6,7 @@ COPY index.html tsconfig.json vite.config.ts ./
 COPY web ./web
 RUN npm run build
 
-FROM golang:1.26.6-alpine AS backend
+FROM golang:1.26.9-alpine AS backend
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
